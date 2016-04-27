@@ -64,6 +64,7 @@ l_forcebuild VARCHAR2(1 CHAR);          -- if true then force build even if stru
 l_desc_index VARCHAR2(1 CHAR);          -- Y to force desc index, N to disable, null to follow PS default
 l_repopdfltsub VARCHAR2(1 CHAR);        -- Y to force move data from old to new default list subpartition
 l_repopnewmax VARCHAR2(1 CHAR);         -- Y to force add partition by exchange of max value and reinsert
+l_rename_parts VARCHAR2(1 CHAR);        -- Y to force rename partition before rebuild - only required in Oracle 8i--20.05.2014
 l_debug_level INTEGER := 0;             -- variable to hold debug level of package
 l_debug_indent INTEGER := 0;
 
@@ -203,6 +204,7 @@ BEGIN
   sys.dbms_output.put_line('28.08.2013 - Fix to drop all not just partitioned indexes on table rebuild');
   sys.dbms_output.put_line('11.12.2013 - No default roles.  They must now be specified');
   sys.dbms_output.put_line('23.01.2014 - Fix to only add subpartitons separately in parent partitions already exist');
+  sys.dbms_output.put_line('20.05.2014 - Suppress partition rename, reinstate with option');
   dbms_application_info.set_module(module_name=>l_module, action_name=>l_action);
 END history;
 
@@ -240,6 +242,7 @@ BEGIN
   l_desc_index := 'Y';             -- y to force desc index, N to disable, null to follow PS default
   l_repopdfltsub := 'N';           -- by default will just exchange default subpartition back
   l_repopnewmax := 'N';            -- by default split maxvalue partition rather than exchange and reinsert - added 11.3.2013
+  l_rename_parts := 'N';           -- by default do not rename partitions before rebuild - left over from Oracle 8i - added 20.5.2014
   l_debug_level := 0;		   -- default debug level is 0
 
   unset_action(p_action_name=>l_action);
@@ -281,6 +284,7 @@ BEGIN
   l_desc_index       := NVL(SYS_CONTEXT(k_sys_context,'desc_index'     ),l_desc_index);
   l_repopdfltsub     := NVL(SYS_CONTEXT(k_sys_context,'repopdfltsub'   ),l_repopdfltsub);
   l_repopnewmax      := NVL(SYS_CONTEXT(k_sys_context,'repopnewmax'    ),l_repopnewmax);
+  l_rename_parts     := NVL(SYS_CONTEXT(k_sys_context,'rename_parts'   ),l_rename_parts); --20.05.2014
 
   l_debug_level      := NVL(TO_NUMBER(SYS_CONTEXT(k_sys_context,'debug_level')),l_debug_level);
 
@@ -321,6 +325,7 @@ BEGIN
   dbms_session.set_context(k_sys_context,'desc_index'       ,l_desc_index);
   dbms_session.set_context(k_sys_context,'repopdfltsub'     ,l_repopdfltsub);
   dbms_session.set_context(k_sys_context,'repopnewmax'      ,l_repopnewmax);
+  dbms_session.set_context(k_sys_context,'rename_parts'     ,l_rename_parts); --20.05.2014
   dbms_session.set_context(k_sys_context,'debug_level'      ,TO_CHAR(l_debug_level));
 
   unset_action(p_action_name=>l_action);
@@ -1014,6 +1019,7 @@ PROCEDURE expand_sbr IS
 
 -------------------------------------------------------------------------------------------------------
 -- shuffle long columns to bottom of record
+-------------------------------------------------------------------------------------------------------
 PROCEDURE shuffle_long IS
                 CURSOR c_cols IS
                 SELECT  c.recname, c.fieldname, c.fieldnum
@@ -1171,6 +1177,7 @@ END col_def;
 
 -------------------------------------------------------------------------------------------------------
 -- insert line of script into table
+-------------------------------------------------------------------------------------------------------
 PROCEDURE ins_line(p_type NUMBER, p_line VARCHAR2) IS
 --              PRAGMA AUTONOMOUS_TRANSACTION;
 		l_module VARCHAR2(48);
@@ -1236,6 +1243,7 @@ PROCEDURE ins_line(p_type NUMBER, p_line VARCHAR2) IS
 
 -------------------------------------------------------------------------------------------------------
 -- insert line of script into table
+-------------------------------------------------------------------------------------------------------
 PROCEDURE debug_line(p_type NUMBER, p_line VARCHAR2) IS
 		l_module VARCHAR2(48);
 		l_action VARCHAR2(32);
@@ -1252,6 +1260,7 @@ PROCEDURE debug_line(p_type NUMBER, p_line VARCHAR2) IS
 
 -------------------------------------------------------------------------------------------------------
 -- insert pause into script
+-------------------------------------------------------------------------------------------------------
 PROCEDURE pause_sql(p_type NUMBER) IS
 		l_module VARCHAR2(48);
 		l_action VARCHAR2(32);
@@ -1269,6 +1278,7 @@ PROCEDURE pause_sql(p_type NUMBER) IS
 
 -------------------------------------------------------------------------------------------------------
 -- sql whenever error control
+-------------------------------------------------------------------------------------------------------
 PROCEDURE whenever_sqlerror(p_type NUMBER, p_error BOOLEAN) IS
 		l_module VARCHAR2(48);
 		l_action VARCHAR2(32);
@@ -1288,6 +1298,7 @@ PROCEDURE whenever_sqlerror(p_type NUMBER, p_error BOOLEAN) IS
 
 -------------------------------------------------------------------------------------------------------
 -- print generation date into build script
+-------------------------------------------------------------------------------------------------------
 PROCEDURE signature(p_type    NUMBER
                            ,p_error BOOLEAN
                            ,p_spool   VARCHAR2 DEFAULT NULL
@@ -1319,6 +1330,7 @@ PROCEDURE signature(p_type    NUMBER
 
 -------------------------------------------------------------------------------------------------------
 -- print generation date into build script
+-------------------------------------------------------------------------------------------------------
 PROCEDURE signoff(p_type NUMBER) IS
         BEGIN
             whenever_sqlerror(p_type,FALSE);
@@ -1328,6 +1340,7 @@ PROCEDURE signoff(p_type NUMBER) IS
 
 -------------------------------------------------------------------------------------------------------
 -- create database roles
+-------------------------------------------------------------------------------------------------------
 PROCEDURE create_roles IS
 		l_module VARCHAR2(48);
 		l_action VARCHAR2(32);
@@ -1356,6 +1369,7 @@ PROCEDURE create_roles IS
         END create_roles;
 -------------------------------------------------------------------------------------------------------
 -- generate commands to rename table partititons
+-------------------------------------------------------------------------------------------------------
 PROCEDURE rename_parts
 (p_type INTEGER DEFAULT 0
 ,p_table_name  VARCHAR2
@@ -1405,15 +1419,17 @@ PROCEDURE rename_parts
 		set_action(p_action_name=>'RENAME_PARTS');
 
 		whenever_sqlerror(p_type,FALSE);
-                OPEN c_tab_parts(p_table_name);
-                LOOP
-                        FETCH c_tab_parts INTO p_tab_parts;
-                        EXIT WHEN c_tab_parts%NOTFOUND;
+                IF l_rename_parts = 'Y' THEN --20.05.2014
+                        OPEN c_tab_parts(p_table_name);
+                        LOOP
+                                FETCH c_tab_parts INTO p_tab_parts;
+                                EXIT WHEN c_tab_parts%NOTFOUND;
 
-                        ins_line(p_type,p_tab_parts.rename_cmd);
-                END LOOP;
-                CLOSE c_tab_parts;
-                ins_line(p_type,'');
+                                ins_line(p_type,p_tab_parts.rename_cmd);
+                        END LOOP;
+                        CLOSE c_tab_parts;
+                        ins_line(p_type,'');
+                END IF;
 
                 IF p_drop_index = 'Y' THEN
                         OPEN c_drop_idx(p_table_name);
@@ -1424,7 +1440,7 @@ PROCEDURE rename_parts
                                 ins_line(p_type,p_drop_idx.drop_cmd);
                         END LOOP;
                         CLOSE c_drop_idx;
-                ELSE
+                ELSIF l_rename_parts = 'Y' THEN --20.05.2014
                         OPEN c_idx_parts(p_table_name);
                         LOOP
                                 FETCH c_idx_parts INTO p_idx_parts;
@@ -1442,6 +1458,7 @@ PROCEDURE rename_parts
 
 -------------------------------------------------------------------------------------------------------
 -- generate commands to rename table partititons
+-------------------------------------------------------------------------------------------------------
 PROCEDURE rename_subparts
 (p_type INTEGER DEFAULT 0
 ,p_table_name   VARCHAR2
@@ -1499,17 +1516,19 @@ PROCEDURE rename_subparts
 					||'/drop_index='||p_drop_index,6);
 
 		whenever_sqlerror(p_type,FALSE);
-                OPEN c_tab_subparts(p_table_name);
-                LOOP
-                        FETCH c_tab_subparts INTO p_tab_subparts;
-                        EXIT WHEN c_tab_subparts%NOTFOUND;
+                IF l_rename_parts = 'Y' THEN --20.05.2014
+                        OPEN c_tab_subparts(p_table_name);
+                        LOOP
+                                FETCH c_tab_subparts INTO p_tab_subparts;
+                                EXIT WHEN c_tab_subparts%NOTFOUND;
 
-                        ins_line(p_type,p_tab_subparts.rename_cmd);
-                END LOOP;
-                CLOSE c_tab_subparts;
-                ins_line(p_type,'');
+                                ins_line(p_type,p_tab_subparts.rename_cmd);
+                        END LOOP;
+                        CLOSE c_tab_subparts;
+                END IF;
 
                 IF p_drop_index = 'Y' THEN
+                        ins_line(p_type,'');
                         OPEN c_drop_idx(p_table_name);
                         LOOP
                                 FETCH c_drop_idx INTO p_drop_idx;
@@ -1518,7 +1537,9 @@ PROCEDURE rename_subparts
                                 ins_line(p_type,p_drop_idx.drop_cmd);
                         END LOOP;
                         CLOSE c_drop_idx;
-                ELSE
+                        ins_line(p_type,'');
+                ELSIF l_rename_parts = 'Y' THEN --20.05.2014
+                        ins_line(p_type,'');
                         OPEN c_idx_subparts(p_table_name);
                         LOOP
                                 FETCH c_idx_subparts INTO p_idx_subparts;
@@ -1527,15 +1548,16 @@ PROCEDURE rename_subparts
                                 ins_line(p_type,p_idx_subparts.rename_cmd);
                         END LOOP;
                         CLOSE c_idx_subparts;
+                        ins_line(p_type,'');
                 END IF;
 		whenever_sqlerror(p_type,TRUE);
-                ins_line(p_type,'');
 
 		unset_action(p_action_name=>l_action);
         END rename_subparts;
 
 -------------------------------------------------------------------------------------------------------
 -- list indexed columns
+-------------------------------------------------------------------------------------------------------
 PROCEDURE ind_cols(p_type NUMBER, p_recname VARCHAR2, p_indexid VARCHAR2, p_desc_index VARCHAR2) IS
                 CURSOR c_ind_cols(p_recname VARCHAR2, p_indexid VARCHAR2) IS
                 SELECT  NVL(LOWER(c.fieldname),k.fieldname) fieldname -- 6.9.2007 only lower case of columns
@@ -1590,6 +1612,7 @@ PROCEDURE ind_cols(p_type NUMBER, p_recname VARCHAR2, p_indexid VARCHAR2, p_desc
 
 -------------------------------------------------------------------------------------------------------
 -- list columns in table for column list in create table DDL
+-------------------------------------------------------------------------------------------------------
 PROCEDURE tab_cols
 (p_type         INTEGER
 ,p_recname      VARCHAR2
@@ -1644,6 +1667,7 @@ END tab_cols;
 
 -------------------------------------------------------------------------------------------------------
 -- list columns in table for column list in create table DDL
+-------------------------------------------------------------------------------------------------------
 PROCEDURE tab_col_list(p_type        INTEGER
                               ,p_recname     VARCHAR2
 	                      ,p_table_name  VARCHAR2 DEFAULT NULL
@@ -1821,6 +1845,7 @@ PROCEDURE tab_col_list(p_type        INTEGER
 
 -------------------------------------------------------------------------------------------------------
 -- generate partition clause on the basis of part ranges table
+-------------------------------------------------------------------------------------------------------
 PROCEDURE tab_listparts(p_type NUMBER, p_recname VARCHAR2
                                ,p_part_id VARCHAR2, p_part_name VARCHAR2
                                ,p_part_basename VARCHAR2
@@ -1889,6 +1914,7 @@ PROCEDURE tab_listparts(p_type NUMBER, p_recname VARCHAR2
 
 -------------------------------------------------------------------------------------------------------
 -- generate partition clause on the basis of part ranges table
+-------------------------------------------------------------------------------------------------------
 PROCEDURE idx_listparts(p_type NUMBER, p_recname VARCHAR2, p_indexid VARCHAR2, 
                                 p_part_id VARCHAR2, p_part_name VARCHAR2) IS
             l_part_def VARCHAR2(400 CHAR);
@@ -1945,6 +1971,7 @@ PROCEDURE idx_listparts(p_type NUMBER, p_recname VARCHAR2, p_indexid VARCHAR2,
 
 -------------------------------------------------------------------------------------------------------
 -- generate partition clause on the basis of part ranges table
+-------------------------------------------------------------------------------------------------------
 PROCEDURE tab_part_ranges(p_type NUMBER, p_recname VARCHAR2, p_part_id VARCHAR2, 
 		                  p_subpart_type VARCHAR2, p_subpartitions INTEGER,
 			          p_arch_flag VARCHAR2 DEFAULT 'N', 
@@ -2037,6 +2064,7 @@ PROCEDURE tab_part_ranges(p_type NUMBER, p_recname VARCHAR2, p_part_id VARCHAR2,
 
 -------------------------------------------------------------------------------------------------------
 -- generate partition clause on the basis of part ranges table
+-------------------------------------------------------------------------------------------------------
 PROCEDURE tab_part_lists(p_type NUMBER, p_recname VARCHAR2, p_part_id VARCHAR2, 
 		            p_subpart_type VARCHAR2, p_subpartitions INTEGER, p_arch_flag VARCHAR2 DEFAULT 'N') IS
                 CURSOR c_tab_part_lists(p_recname VARCHAR2) IS
@@ -2113,6 +2141,7 @@ PROCEDURE tab_part_lists(p_type NUMBER, p_recname VARCHAR2, p_part_id VARCHAR2,
 
 -------------------------------------------------------------------------------------------------------
 -- generate partition clause on the basis of part ranges table
+-------------------------------------------------------------------------------------------------------
 PROCEDURE ind_hashparts(p_type      NUMBER
 	                       ,p_recname   VARCHAR2
 	                       ,p_indexid   VARCHAR2 DEFAULT '_'
@@ -2155,6 +2184,7 @@ PROCEDURE tab_hashparts(p_type      NUMBER
 
 -------------------------------------------------------------------------------------------------------
 -- generate partition clause on the basis of part ranges table
+-------------------------------------------------------------------------------------------------------
 PROCEDURE ind_listparts(p_type NUMBER, p_recname VARCHAR2, p_indexid VARCHAR2, 
                                 p_part_id VARCHAR2, p_part_name VARCHAR2,
                                 p_arch_flag VARCHAR2 DEFAULT ''
@@ -2211,6 +2241,7 @@ PROCEDURE ind_listparts(p_type NUMBER, p_recname VARCHAR2, p_indexid VARCHAR2,
 
 -------------------------------------------------------------------------------------------------------
 -- generate partition clause for create index DDL
+-------------------------------------------------------------------------------------------------------
 PROCEDURE ind_part_ranges(p_type NUMBER, p_recname VARCHAR2, p_indexid VARCHAR2, 
                             p_part_id VARCHAR2, p_subpart_type VARCHAR2, p_subpartitions NUMBER,
                             p_arch_flag VARCHAR2 DEFAULT 'N', 
@@ -2285,6 +2316,7 @@ PROCEDURE ind_part_ranges(p_type NUMBER, p_recname VARCHAR2, p_indexid VARCHAR2,
 
 -------------------------------------------------------------------------------------------------------
 -- generate partition clause for create index DDL
+-------------------------------------------------------------------------------------------------------
 PROCEDURE ind_part_lists(p_type NUMBER, p_recname VARCHAR2, p_indexid VARCHAR2, 
                             p_part_id VARCHAR2, p_subpart_type VARCHAR2, p_subpartitions NUMBER) IS
                 CURSOR c_ind_part_lists IS
@@ -2345,6 +2377,7 @@ PROCEDURE ind_part_lists(p_type NUMBER, p_recname VARCHAR2, p_indexid VARCHAR2,
 
 -------------------------------------------------------------------------------------------------------
 -- enable/disable DDL trigger, added 10.10.2007
+-------------------------------------------------------------------------------------------------------
 	PROCEDURE ddlpermit(p_type NUMBER, p_ddlpermit BOOLEAN) IS
 		l_module VARCHAR2(48);
 		l_action VARCHAR2(32);
@@ -2381,6 +2414,7 @@ PROCEDURE ind_part_lists(p_type NUMBER, p_recname VARCHAR2, p_indexid VARCHAR2,
 -------------------------------------------------------------------------------------------------------
 -- generate partition clause for global index
 --only build partitions not set to (D)rop or (A)rchive
+-------------------------------------------------------------------------------------------------------
 PROCEDURE glob_ind_parts(p_type INTEGER, p_recname VARCHAR2, p_indexid VARCHAR2, p_part_id VARCHAR2, 
 		            p_part_type VARCHAR2, p_subpart_type VARCHAR2, p_subpartitions INTEGER) IS
                 CURSOR c_idx_parts (p_recname VARCHAR2) IS
@@ -2456,6 +2490,7 @@ PROCEDURE glob_ind_parts(p_type INTEGER, p_recname VARCHAR2, p_indexid VARCHAR2,
 -------------------------------------------------------------------------------------------------------
 -- generate all partitioned indexes defined on record
 -- wibble do not  build archive partition
+-------------------------------------------------------------------------------------------------------
 PROCEDURE mk_part_indexes(p_recname    VARCHAR2
                                  ,p_table_name VARCHAR2
                                  ,p_schema     VARCHAR2
@@ -2673,6 +2708,7 @@ PROCEDURE mk_part_indexes(p_recname    VARCHAR2
 
 -------------------------------------------------------------------------------------------------------
 -- generate all partitioned indexes defined on record
+-------------------------------------------------------------------------------------------------------
 PROCEDURE mk_arch_indexes(p_type       NUMBER
 				 ,p_recname    VARCHAR2
                                  ,p_schema     VARCHAR2
@@ -2846,6 +2882,7 @@ PROCEDURE mk_arch_indexes(p_type       NUMBER
 
 -------------------------------------------------------------------------------------------------------
 -- generate all GLOBAL TEMPORARY indexes defined on record
+-------------------------------------------------------------------------------------------------------
 PROCEDURE mk_gt_indexes (p_recname VARCHAR2, p_table_name VARCHAR2, p_suffix VARCHAR2) IS
                 CURSOR c_indexes (p_recname VARCHAR2) IS
                 SELECT  g.indexid, g.uniqueflag, g.name_suffix
@@ -2895,6 +2932,7 @@ PROCEDURE mk_gt_indexes (p_recname VARCHAR2, p_table_name VARCHAR2, p_suffix VAR
 
 -------------------------------------------------------------------------------------------------------
 -- match with database
+-------------------------------------------------------------------------------------------------------
 	PROCEDURE match_db IS
 		l_module VARCHAR2(48);
 		l_action VARCHAR2(32);
@@ -2959,6 +2997,7 @@ PROCEDURE mk_gt_indexes (p_recname VARCHAR2, p_table_name VARCHAR2, p_suffix VAR
 
 -------------------------------------------------------------------------------------------------------
 -- set index tablespace to partititon tablespace
+-------------------------------------------------------------------------------------------------------
 	PROCEDURE set_index_tablespace(p_type NUMBER, p_recname VARCHAR2, p_part_name VARCHAR2, 
                                        p_schema VARCHAR2, p_arch_flag VARCHAR2) IS
                 l_counter INTEGER := 0;
@@ -3018,6 +3057,7 @@ PROCEDURE mk_gt_indexes (p_recname VARCHAR2, p_table_name VARCHAR2, p_suffix VAR
 
 -------------------------------------------------------------------------------------------------------
 -- set index tablespace to partititon tablespace
+-------------------------------------------------------------------------------------------------------
 	PROCEDURE unset_index_tablespace(p_type NUMBER, p_recname VARCHAR2, p_schema VARCHAR2, p_arch_flag VARCHAR2) IS
                 l_counter INTEGER := 0;
 		l_module VARCHAR2(48);
@@ -3128,6 +3168,7 @@ PROCEDURE subpart_update_indexes(p_type           NUMBER
 
 -------------------------------------------------------------------------------------------------------
 -- generate partition clause on the basis of part ranges table - added 11.3.2013
+-------------------------------------------------------------------------------------------------------
 PROCEDURE create_partex
 (p_type         NUMBER
 ,p_recname      VARCHAR2
@@ -3285,6 +3326,7 @@ END create_partex;
 -------------------------------------------------------------------------------------------------------
 -- generate partition clause on the basis of part lists table
 -- wibble - need to add range support here for 11g
+-------------------------------------------------------------------------------------------------------
 PROCEDURE create_subpartex
 (p_type         NUMBER
 ,p_recname      VARCHAR2
@@ -3407,6 +3449,7 @@ EXCEPTION
 END create_subpartex;
 -------------------------------------------------------------------------------------------------------
 -- generate partition clause on the basis of part ranges table
+-------------------------------------------------------------------------------------------------------
 PROCEDURE drop_subpartex
 (p_type       NUMBER
 ,p_recname    VARCHAR2
@@ -3514,6 +3557,7 @@ END drop_subpartex;
 -------------------------------------------------------------------------------------------------------
 -- generate partition clause on the basis of part ranges table
 -- 23.1.2014 added check that parent partition exists, otherwise subpartitions will be added with partition
+-------------------------------------------------------------------------------------------------------
 PROCEDURE add_tab_subparts
 (p_type NUMBER
 , p_recname VARCHAR2
@@ -3639,6 +3683,7 @@ END add_tab_subparts;
 
 -------------------------------------------------------------------------------------------------------
 -- generate partition clause on the basis of part ranges table
+-------------------------------------------------------------------------------------------------------
 PROCEDURE add_tab_parts
 (p_type             NUMBER
 ,p_recname          VARCHAR2
@@ -3752,6 +3797,7 @@ END add_tab_parts;
 
 -------------------------------------------------------------------------------------------------------
 -- 11.3.2013 add procdure to exchange maxvalue range partition out
+-------------------------------------------------------------------------------------------------------
 PROCEDURE add_tab_parts_newmax
 (p_type             NUMBER
 ,p_recname          VARCHAR2
@@ -4158,6 +4204,7 @@ END split_tab_parts;
 
 -------------------------------------------------------------------------------------------------------
 -- process partitioned tables
+-------------------------------------------------------------------------------------------------------
 PROCEDURE part_tables(p_part_id VARCHAR2 DEFAULT ''
                              ,p_recname VARCHAR2 DEFAULT '') IS
                 l_hint      VARCHAR2(100 CHAR);
@@ -4988,6 +5035,7 @@ BEGIN
 END exec_sql;
 ---------------------------------------------------------------
 -- drop named table
+-------------------------------------------------------------------------------------------------------
 	PROCEDURE drop_table
 	(p_table_name VARCHAR2
 	) IS
@@ -5008,6 +5056,7 @@ END exec_sql;
 
 ---------------------------------------------------------------
 -- gfc_ps_tab_columns holds a list of columns for tables to be recreated.   Any sub-records will be expanded recursively
+-------------------------------------------------------------------------------------------------------
 	PROCEDURE ddl_gfc_ps_tab_columns
 	(p_gtt BOOLEAN DEFAULT FALSE) 
 	IS
@@ -5037,6 +5086,7 @@ END exec_sql;
 
 ---------------------------------------------------------------
 -- gfc_ora_tab_columns
+-------------------------------------------------------------------------------------------------------
 	PROCEDURE ddl_gfc_ora_tab_columns
 	(p_gtt BOOLEAN DEFAULT FALSE) 
 	IS
@@ -5065,6 +5115,7 @@ END exec_sql;
 
 ---------------------------------------------------------------
 -- to hold override parameters for function based indexes specified in partdata - 19.10.2007
+-------------------------------------------------------------------------------------------------------
 	PROCEDURE ddl_gfc_ps_idxddlparm
 	(p_gtt BOOLEAN DEFAULT FALSE) 
 	IS
@@ -5125,6 +5176,7 @@ END exec_sql;
 
 ---------------------------------------------------------------
 -- gfc_ps_tables holds the records for which DDL scripts are to be regeneated by this script
+-------------------------------------------------------------------------------------------------------
 	PROCEDURE ddl_gfc_ps_tables
 	(p_gtt BOOLEAN DEFAULT FALSE) 
 	IS
@@ -5157,6 +5209,7 @@ END exec_sql;
 
 ---------------------------------------------------------------
 -- gfc_ps_indexdefn - expanded version of psindexdefn
+-------------------------------------------------------------------------------------------------------
 	PROCEDURE ddl_gfc_ps_indexdefn
 	(p_gtt BOOLEAN DEFAULT FALSE) 
 	IS
@@ -5189,6 +5242,7 @@ END exec_sql;
 
 ---------------------------------------------------------------
 -- gfc_ps_keydefn - expanded version of pskeydefn
+-------------------------------------------------------------------------------------------------------
 	PROCEDURE ddl_gfc_ps_keydefn
 	(p_gtt BOOLEAN DEFAULT FALSE) 
 	IS
@@ -5438,7 +5492,7 @@ END exec_sql;
 
 ---------------------------------------------------------------
 -- rem 11.2.2003 - view corrected to handled user indexes
-
+-------------------------------------------------------------------------------------------------------
 	PROCEDURE ddl_gfc_ps_keydefn_vw
 	IS
 		l_sql VARCHAR2(1000 CHAR);
@@ -5518,6 +5572,7 @@ BEGIN
 END spooler;
 ---------------------------------------------------------------
 -- create all working storage tables
+-------------------------------------------------------------------------------------------------------
 PROCEDURE create_tables
 (p_gtt BOOLEAN DEFAULT FALSE) 
 IS
@@ -5543,6 +5598,7 @@ END create_tables;
 
 ---------------------------------------------------------------
 -- drop named table
+-------------------------------------------------------------------------------------------------------
 PROCEDURE drop_tables IS
 BEGIN
   read_context;
@@ -5619,6 +5675,7 @@ BEGIN
   sys.dbms_output.put_line('Force descending index                 : '||l_desc_index);
   sys.dbms_output.put_line('Repopulate default list sub-partition  : '||l_repopdfltsub);
   sys.dbms_output.put_line('Repopulate new max value partition     : '||l_repopnewmax);
+  sys.dbms_output.put_line('Rename partitions and subpartitions    : '||l_rename_parts);--20.05.2014
   sys.dbms_output.put_line('Debug Level (0=disabled)               : '||l_debug_level);
 
   dbms_application_info.set_module(module_name=>l_module, action_name=>l_action);
@@ -5669,6 +5726,7 @@ PROCEDURE set_defaults
 ,p_desc_index      VARCHAR2 DEFAULT ''
 ,p_repopdfltsub    VARCHAR2 DEFAULT ''
 ,p_repopnewmax     VARCHAR2 DEFAULT ''
+,p_rename_parts    VARCHAR2 DEFAULT ''
 ,p_debug_level     INTEGER DEFAULT NULL
         ) IS
   l_module VARCHAR2(48);
@@ -5773,6 +5831,10 @@ PROCEDURE set_defaults
 
 		IF p_repopnewmax IS NOT NULL THEN
 			l_repopnewmax := p_repopnewmax;
+		END IF;
+
+		IF p_rename_parts IS NOT NULL THEN
+			l_rename_parts := p_rename_parts; --20.05.2014
 		END IF;
 
 		IF p_debug_level IS NOT NULL THEN
