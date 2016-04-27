@@ -6,17 +6,7 @@ spool gfcbuildpkg
 set serveroutput on buffer 1000000000 verify on feedback on lines 120 timing off autotrace off pause off echo off termout on
 --set echo on
 
------------------------------------------------------------------------------------------------------------
---SYSADM requires the following privileges
------------------------------------------------------------------------------------------------------------
-GRANT SELECT ON sys.v_$parameter TO sysadm;
-GRANT SELECT ON sys.v_$version TO sysadm;
-GRANT CREATE ANY CONTEXT TO sysadm;
------------------------------------------------------------------------------------------------------------
-
-
-@@gfcbuildtab.sql
-
+--@@gfcbuildtab.sql--removed 1.11.2012 because it could cause accidental loss of additional privileges on metadata tables
 
 -----------------------------------------------------------------------------------------------------------
 --now build the package
@@ -49,7 +39,8 @@ PROCEDURE reset_defaults;
 PROCEDURE set_defaults
 (p_chardef         VARCHAR2 DEFAULT ''
 ,p_logging         VARCHAR2 DEFAULT ''
-,p_parallel        VARCHAR2 DEFAULT ''
+,p_parallel_table  VARCHAR2 DEFAULT ''
+,p_parallel_index  VARCHAR2 DEFAULT ''
 ,p_roles           VARCHAR2 DEFAULT ''
 ,p_scriptid        VARCHAR2 DEFAULT ''
 ,p_update_all      VARCHAR2 DEFAULT ''
@@ -61,11 +52,17 @@ PROCEDURE set_defaults
 ,p_build_stats     VARCHAR2 DEFAULT ''
 ,p_deletetempstats VARCHAR2 DEFAULT ''
 ,p_longtoclob      VARCHAR2 DEFAULT ''
-,p_ddltrigger      VARCHAR2 DEFAULT '*'
+--,p_ddltrigger    VARCHAR2 DEFAULT '*'
+,p_ddlenable       VARCHAR2 DEFAULT ''
+,p_ddldisable      VARCHAR2 DEFAULT ''
 ,p_drop_purge      VARCHAR2 DEFAULT ''
---,p_noalterprefix   VARCHAR2 DEFAULT '*'
+--,p_noalterprefix VARCHAR2 DEFAULT '*'
 ,p_forcebuild      VARCHAR2 DEFAULT ''
 ,p_desc_index      VARCHAR2 DEFAULT ''
+,p_repopdfltsub    VARCHAR2 DEFAULT ''
+,p_repopnewmax     VARCHAR2 DEFAULT ''
+,p_rename_parts    VARCHAR2 DEFAULT ''
+,p_debug_level     INTEGER DEFAULT NULL
 );
 
 -----------------------------------------------------------------------------------------------------------
@@ -76,10 +73,19 @@ PROCEDURE truncate_tables
 );
 
 -----------------------------------------------------------------------------------------------------------
---Main DDL Generation Procedure
+--Spool script
+-----------------------------------------------------------------------------------------------------------
+TYPE outrecset IS TABLE OF VARCHAR2(200);
+FUNCTION spooler
+(p_type NUMBER DEFAULT 0) 
+RETURN outrecset PIPELINED;
+
+-----------------------------------------------------------------------------------------------------------
+--Main DDL Generation Procedure   
 -----------------------------------------------------------------------------------------------------------
 PROCEDURE main
-(p_recname     VARCHAR2 DEFAULT ''  --name of table(s) to be built - pattern matching possible - default null implies all
+(p_part_id     VARCHAR2 DEFAULT ''  --Build matching list of PART_IDs
+,p_recname     VARCHAR2 DEFAULT ''  --name of table(s) to be built - pattern matching possible - default null implies all
 ,p_rectype     VARCHAR2 DEFAULT 'A' --Build (P)artitioned tables, Global (T)emp tables, or (A)ll tables - default ALL
 ,p_projectname VARCHAR2 DEFAULT ''  --Build records in named Application Designer Project
 );
@@ -87,13 +93,14 @@ PROCEDURE main
 END gfc_pspart;
 /
 
-
-
 -----------------------------------------------------------------------------------------------------------
+--@@gfcbuildpkgbody.sql
 @@gfcbuildpkgbody.plb
 -----------------------------------------------------------------------------------------------------------
-spool off
-
+spool gfcbuildpkg-check
 execute gfc_pspart.history;
 execute gfc_pspart.set_defaults;
 execute gfc_pspart.display_defaults;
+spool off
+
+
