@@ -205,6 +205,8 @@ BEGIN
   sys.dbms_output.put_line('11.12.2013 - No default roles.  They must now be specified');
   sys.dbms_output.put_line('23.01.2014 - Fix to only add subpartitons separately in parent partitions already exist');
   sys.dbms_output.put_line('20.05.2014 - Suppress partition rename, reinstate with option');
+  sys.dbms_output.put_line('20.10.2014 - Support for range sub-partitioning added');
+  sys.dbms_output.put_line('07.01.2015 - Fix indexes on subrecords in temporary tables');
   dbms_application_info.set_module(module_name=>l_module, action_name=>l_action);
 END history;
 
@@ -720,18 +722,19 @@ BEGIN
 
   INSERT INTO gfc_ps_tab_columns -- 30.1.2013 added to make sure any temp tables also go in
   (      recname, fieldname, useedit, fieldnum, subrecname)
-  SELECT DISTINCT r.recname, f.fieldname, f.useedit, f.fieldnum, r.recname
+  SELECT DISTINCT r.recname, f.fieldname, f.useedit, f.fieldnum
+  , f.recname_parent --7.1.2015 changed from r.recname 
   FROM   gfc_ps_tables r
   ,	 gfc_temp_tables t -- 30.1.2013 this query only does temp record
   ,      psrecfielddb f
   WHERE  r.recname = f.recname
   AND    t.recname = r.recname
-  AND    (r.recname LIKE p_recname OR p_recname IS NULL) 
   AND NOT EXISTS(-- 18.12.2008 -- added criteria on p_recname to prevent duplicate inserts
          SELECT 'x' 
          FROM   gfc_ps_tab_columns c
          WHERE  c.recname = f.recname
          AND    c.fieldname = f.fieldname)
+  AND    (r.recname LIKE p_recname OR p_recname IS NULL) 
   ;
 
   INSERT INTO gfc_ps_tab_columns
@@ -1844,9 +1847,9 @@ PROCEDURE tab_col_list(p_type        INTEGER
 	END idx_storage;
 
 -------------------------------------------------------------------------------------------------------
--- generate partition clause on the basis of part ranges table
+-- generate range subpartition clause on the basis of part ranges table
 -------------------------------------------------------------------------------------------------------
-PROCEDURE tab_listparts(p_type NUMBER, p_recname VARCHAR2
+PROCEDURE tab_rangesubparts(p_type NUMBER, p_recname VARCHAR2
                                ,p_part_id VARCHAR2, p_part_name VARCHAR2
                                ,p_part_basename VARCHAR2
                                ,p_arch_flag VARCHAR2 DEFAULT 'N') IS -- 19.3.2010 added subpart
@@ -1856,9 +1859,9 @@ PROCEDURE tab_listparts(p_type NUMBER, p_recname VARCHAR2
             l_action VARCHAR2(32);
         BEGIN
             dbms_application_info.read_module(module_name=>l_module, action_name=>l_action);
-            set_action(p_action_name=>'TAB_LISTPARTS');
+            set_action(p_action_name=>'TAB_RANGESUBPARTS');
 
-            debug_msg('TAB_LISTPARTS:recname='||p_recname
+            debug_msg('TAB_RANGESUBPARTS:recname='||p_recname
                                  ||'/part_id='||p_part_id
                                  ||'/part_name='||p_part_name
                                  ||'/part_basename='||p_part_basename
@@ -1868,14 +1871,83 @@ PROCEDURE tab_listparts(p_type NUMBER, p_recname VARCHAR2
             -- 12.2.2008 restrict combinations of partitions
             FOR t IN(
                 SELECT a.*
-                FROM   gfc_part_lists a, gfc_part_range_lists b
+                FROM   gfc_part_ranges a, gfc_part_subparts b
                 WHERE  a.part_id = p_part_id
                 AND    b.part_id = p_part_id
-                AND    b.range_name = p_part_name
-                AND    b.list_name = a.part_name
+                AND    b.part_name = p_part_name
+                AND    b.subpart_name = a.part_name
                 AND    b.build = 'Y' -- if subpartition to be built in range partition
                 AND    (a.arch_flag = p_arch_flag OR p_arch_flag IS NULL)
-                ORDER BY a.part_name
+                ORDER BY a.part_no
+            ) LOOP
+                IF l_counter = 0 THEN
+                    l_part_def := '(';
+                ELSE
+                    l_part_def := ',';
+                END IF;
+                l_part_def := l_part_def||'SUBPARTITION '||LOWER(p_part_basename
+                                        ||'_'||p_part_name||'_'||t.part_name);
+                ins_line(p_type,l_part_def);
+
+		l_part_def := ' VALUES LESS THAN ('||t.part_value||')';
+                ins_line(p_type,l_part_def);
+                l_part_def := '';
+
+                IF t.tab_tablespace IS NOT NULL THEN
+                    l_part_def := ' TABLESPACE '||t.tab_tablespace;
+                END IF;
+
+-- 3.7.2012 remove physical storage parameters from subpartition definition including Oracle 11.2
+--              IF t.tab_storage IS NOT NULL AND l_oraver >= 11.2 THEN
+--                  l_part_def := l_part_def||' '||tab_storage(p_recname, t.tab_storage); -- 6.9.2007
+--              END IF;
+
+                IF l_part_def IS NOT NULL THEN
+                    debug(l_part_def);
+                    ins_line(p_type,l_part_def);
+                END IF;
+                l_counter := l_counter + 1;
+            END LOOP;
+            IF l_counter > 0 THEN
+                    ins_line(p_type,')');
+            END IF;
+
+            unset_action(p_action_name=>l_action);
+         END tab_rangesubparts;
+
+-------------------------------------------------------------------------------------------------------
+-- generate list subpartition clause on the basis of part ranges table
+-------------------------------------------------------------------------------------------------------
+PROCEDURE tab_listsubparts(p_type NUMBER, p_recname VARCHAR2
+                               ,p_part_id VARCHAR2, p_part_name VARCHAR2
+                               ,p_part_basename VARCHAR2
+                               ,p_arch_flag VARCHAR2 DEFAULT 'N') IS -- 19.3.2010 added subpart
+            l_part_def VARCHAR2(400 CHAR);
+            l_counter INTEGER := 0;
+            l_module VARCHAR2(48);
+            l_action VARCHAR2(32);
+        BEGIN
+            dbms_application_info.read_module(module_name=>l_module, action_name=>l_action);
+            set_action(p_action_name=>'TAB_LISTSUBPARTS');
+
+            debug_msg('TAB_LISTSUBPARTS:recname='||p_recname
+                                 ||'/part_id='||p_part_id
+                                 ||'/part_name='||p_part_name
+                                 ||'/part_basename='||p_part_basename
+                                 ||'/arch_flag='||p_arch_flag
+                                 ,6);
+
+            -- 12.2.2008 restrict combinations of partitions
+            FOR t IN(
+                SELECT a.*
+                FROM   gfc_part_lists a, gfc_part_subparts b
+                WHERE  a.part_id = p_part_id
+                AND    b.part_id = p_part_id
+                AND    b.part_name = p_part_name
+                AND    b.subpart_name = a.part_name
+                AND    b.build = 'Y' -- if subpartition to be built in range partition
+                AND    (a.arch_flag = p_arch_flag OR p_arch_flag IS NULL)
+                ORDER BY a.part_no --20.10.2014 corrected order by
             ) LOOP
                 IF l_counter = 0 THEN
                     l_part_def := '(';
@@ -1910,12 +1982,12 @@ PROCEDURE tab_listparts(p_type NUMBER, p_recname VARCHAR2
             END IF;
 
             unset_action(p_action_name=>l_action);
-        END tab_listparts;
+         END tab_listsubparts;
 
 -------------------------------------------------------------------------------------------------------
--- generate partition clause on the basis of part ranges table
+-- generate subpartition clause on the basis of part list table
 -------------------------------------------------------------------------------------------------------
-PROCEDURE idx_listparts(p_type NUMBER, p_recname VARCHAR2, p_indexid VARCHAR2, 
+PROCEDURE idx_listsubparts(p_type NUMBER, p_recname VARCHAR2, p_indexid VARCHAR2, 
                                 p_part_id VARCHAR2, p_part_name VARCHAR2) IS
             l_part_def VARCHAR2(400 CHAR);
             l_counter INTEGER := 0;
@@ -1923,20 +1995,20 @@ PROCEDURE idx_listparts(p_type NUMBER, p_recname VARCHAR2, p_indexid VARCHAR2,
             l_action VARCHAR2(32);
         BEGIN
             dbms_application_info.read_module(module_name=>l_module, action_name=>l_action);
-            set_action(p_action_name=>'IDX_LISTPARTS');
+            set_action(p_action_name=>'IDX_LISTSUBPARTS');
 
-            debug_msg('idx_listparts:'||p_recname||'/'||p_indexid||'/'||p_part_id,6);
+            debug_msg('idx_listsubparts:'||p_recname||'/'||p_indexid||'/'||p_part_id,6);
 
             -- 12.2.2008 restrict combinations of partitions
             FOR t IN(
                         SELECT  a.*
-                        FROM    gfc_part_lists a, gfc_part_range_lists b
+                        FROM    gfc_part_lists a, gfc_part_subparts b
                         WHERE   a.part_id = p_part_id
                         AND     b.part_id = p_part_id
-                        AND     b.range_name = p_part_name
-                        AND     b.list_name = a.part_name
+                        AND     b.part_name = p_part_name
+                        AND     b.subpart_name = a.part_name
                         AND     b.build = 'Y' -- if subpartition to be built in range partition
-                        ORDER BY a.part_name
+                        ORDER BY a.part_no
             ) LOOP
                 IF l_counter = 0 THEN
                     l_part_def := '(';
@@ -1967,7 +2039,64 @@ PROCEDURE idx_listparts(p_type NUMBER, p_recname VARCHAR2, p_indexid VARCHAR2,
             END IF;
 
             unset_action(p_action_name=>l_action);
-        END idx_listparts;
+        END idx_listsubparts;
+
+-------------------------------------------------------------------------------------------------------
+-- generate partition clause on the basis of part ranges table
+-------------------------------------------------------------------------------------------------------
+PROCEDURE idx_rangesubparts(p_type NUMBER, p_recname VARCHAR2, p_indexid VARCHAR2, 
+                                p_part_id VARCHAR2, p_part_name VARCHAR2) IS
+            l_part_def VARCHAR2(400 CHAR);
+            l_counter INTEGER := 0;
+            l_module VARCHAR2(48);
+            l_action VARCHAR2(32);
+        BEGIN
+            dbms_application_info.read_module(module_name=>l_module, action_name=>l_action);
+            set_action(p_action_name=>'IDX_RANGESUBPARTS');
+
+            debug_msg('idx_rangesubparts:'||p_recname||'/'||p_indexid||'/'||p_part_id,6);
+
+            -- 12.2.2008 restrict combinations of partitions
+            FOR t IN(
+                        SELECT  a.*
+                        FROM    gfc_part_ranges a, gfc_part_subparts b
+                        WHERE   a.part_id = p_part_id
+                        AND     b.part_id = p_part_id
+                        AND     b.part_name = p_part_name
+                        AND     b.subpart_name = a.part_name
+                        AND     b.build = 'Y' -- if subpartition to be built in range partition
+                        ORDER BY a.part_no
+            ) LOOP
+                IF l_counter = 0 THEN
+                    l_part_def := '(';
+                ELSE
+                    l_part_def := ',';
+                END IF;
+                l_part_def := l_part_def||'SUBPARTITION '
+                                        ||LOWER(p_recname||p_indexid||p_part_name||'_'||t.part_name);
+                ins_line(p_type,l_part_def);
+
+                l_part_def := ' VALUES LESS THAN ('||t.part_value||')';
+                IF t.tab_tablespace IS NOT NULL THEN
+                    l_part_def := l_part_def||' TABLESPACE '||t.idx_tablespace;
+                END IF;
+-- 3.7.2012 remove physical storage option from subpartition create clause including Oracle 11.2
+--              IF t.idx_storage IS NOT NULL AND l_oraver >= 11.2 THEN
+--                  l_part_def := l_part_def||' '||
+--                                idx_storage(p_recname, p_indexid, t.idx_storage);
+--              END IF;
+                IF l_part_def IS NOT NULL THEN
+                    debug(l_part_def);
+                    ins_line(p_type,l_part_def);
+                END IF;
+                l_counter := l_counter + 1;
+            END LOOP;
+            IF l_counter > 0 THEN
+                ins_line(p_type,')');
+            END IF;
+
+            unset_action(p_action_name=>l_action);
+        END idx_rangesubparts;
 
 -------------------------------------------------------------------------------------------------------
 -- generate partition clause on the basis of part ranges table
@@ -2046,8 +2175,15 @@ PROCEDURE tab_part_ranges(p_type NUMBER, p_recname VARCHAR2, p_part_id VARCHAR2,
                                         ins_line(p_type,l_part_def);
                                 END LOOP;
                                 ins_line(p_type,')');
+			ELSIF p_subpart_type = 'R' THEN --20.10.2014 add range sub-partitioning
+				tab_rangesubparts(p_type=>p_type
+					,p_recname=>p_recname
+					,p_part_id=>p_part_id
+					,p_part_name=>p_tab_part_ranges.part_name
+					,p_part_basename=>NVL(p_part_name,p_recname)
+					,p_arch_flag=>p_arch_flag); 
 			ELSIF p_subpart_type = 'L' THEN
-				tab_listparts(p_type=>p_type
+				tab_listsubparts(p_type=>p_type
 					,p_recname=>p_recname
 					,p_part_id=>p_part_id
 					,p_part_name=>p_tab_part_ranges.part_name
@@ -2098,10 +2234,10 @@ PROCEDURE tab_part_lists(p_type NUMBER, p_recname VARCHAR2, p_part_id VARCHAR2,
 
                         l_counter := l_counter + 1;
                         IF l_counter = 1 THEN
-                                        l_part_def := '(';
-                                ELSE
-                                        l_part_def := ',';
-                                END IF;
+                                l_part_def := '(';
+                        ELSE
+                                l_part_def := ',';
+                        END IF;
                         l_part_def := l_part_def||'PARTITION '||LOWER(p_recname||'_'||p_tab_part_lists.part_name);
                         ins_line(p_type,l_part_def);
 			l_part_def := ' VALUES ('||p_tab_part_lists.list_value||')';
@@ -2116,7 +2252,14 @@ PROCEDURE tab_part_lists(p_type NUMBER, p_recname VARCHAR2, p_part_id VARCHAR2,
 			IF LENGTH(l_part_def) > 0 THEN
 	                        ins_line(p_type,l_part_def);
 			END IF;
-                        IF p_subpart_type = 'H' AND p_subpartitions > 1 THEN
+                        IF p_subpart_type = 'R' THEN --20.10.2014 add range sub-partitioning
+				tab_rangesubparts(p_type=>p_type
+					,p_recname=>p_recname
+					,p_part_id=>p_part_id
+					,p_part_name=>p_tab_part_lists.part_name
+					,p_part_basename=>NVL(p_tab_part_lists.part_name,p_recname)
+					,p_arch_flag=>p_arch_flag); 
+                        ELSIF p_subpart_type = 'H' AND p_subpartitions > 1 THEN
                                 FOR l_subpartition IN 1..p_subpartitions LOOP
                                         IF l_subpartition = 1 THEN
                                                 l_part_def := '(';
@@ -2206,11 +2349,11 @@ PROCEDURE ind_listparts(p_type NUMBER, p_recname VARCHAR2, p_indexid VARCHAR2,
 
 		FOR t IN(
 			SELECT  a.*
-			FROM	gfc_part_lists a, gfc_part_range_lists b
+			FROM	gfc_part_lists a, gfc_part_subparts b
 			WHERE	a.part_id = p_part_id
 			AND     b.part_id = p_part_id
-			AND	b.range_name = p_part_name
-			AND     b.list_name = a.part_name
+			AND	b.part_name = p_part_name
+			AND     b.subpart_name = a.part_name
 			AND     b.build = 'Y' -- if subpartition to be built in range partition
                   AND    (a.arch_flag = p_arch_flag OR p_arch_flag IS NULL)
 			ORDER BY a.part_name
@@ -2476,7 +2619,9 @@ PROCEDURE glob_ind_parts(p_type INTEGER, p_recname VARCHAR2, p_indexid VARCHAR2,
                                 END LOOP;
                                 ins_line(p_type,')');
 			ELSIF p_subpart_type = 'L' THEN
-				idx_listparts(p_type,p_recname,p_indexid,p_part_id,p_idx_parts.part_name);
+				idx_listsubparts(p_type,p_recname,p_indexid,p_part_id,p_idx_parts.part_name);
+			ELSIF p_subpart_type = 'T' THEN
+				idx_rangesubparts(p_type,p_recname,p_indexid,p_part_id,p_idx_parts.part_name);
                         END IF;
                 END LOOP;
                 IF l_counter > 0 THEN
@@ -2489,7 +2634,7 @@ PROCEDURE glob_ind_parts(p_type INTEGER, p_recname VARCHAR2, p_indexid VARCHAR2,
 
 -------------------------------------------------------------------------------------------------------
 -- generate all partitioned indexes defined on record
--- wibble do not  build archive partition
+-- wibble do not build archive partition
 -------------------------------------------------------------------------------------------------------
 PROCEDURE mk_part_indexes(p_recname    VARCHAR2
                                  ,p_table_name VARCHAR2
@@ -3582,15 +3727,15 @@ PROCEDURE add_tab_subparts
   ,      pl.IDX_STORAGE    
   FROM   gfc_part_ranges pr
   ,	   gfc_part_lists pl
-  ,      gfc_part_range_lists prl
+  ,      gfc_part_subparts prl
   ,      all_tab_partitions tp --added 23.1.2014
   WHERE  pr.part_id = p_part_id
   AND    pl.part_id = p_part_id
   AND    (pr.arch_flag = p_arch_flag OR p_arch_flag IS NULL)
   AND    (pl.arch_flag = p_arch_flag OR p_arch_flag IS NULL)
   AND    prl.part_id = p_part_id
-  AND    prl.range_name = pr.part_name
-  AND    prl.list_name = pl.part_name
+  AND    prl.part_name = pr.part_name
+  AND    prl.subpart_name = pl.part_name
   AND    prl.build = 'Y'
   AND    tp.table_owner = UPPER(p_table_owner)
   AND    tp.table_name = UPPER(p_table_name)
@@ -3776,8 +3921,13 @@ BEGIN
         ins_line(p_type,l_part_def);
       END LOOP;
       ins_line(p_type,')');
+    ELSIF p_subpart_type = 'R' THEN
+      tab_rangesubparts(p_type, p_recname
+                   ,p_tab_parts.part_id
+                   ,p_tab_parts.part_name
+                   ,p_part_name);
     ELSIF p_subpart_type = 'L' THEN
-      tab_listparts(p_type, p_recname
+      tab_listsubparts(p_type, p_recname
                    ,p_tab_parts.part_id
                    ,p_tab_parts.part_name
                    ,p_part_name);
@@ -3949,8 +4099,13 @@ BEGIN
           ins_line(p_type,l_part_def);
         END LOOP;
         ins_line(p_type,')');
+      ELSIF p_subpart_type = 'R' THEN
+        tab_rangesubparts(p_type, p_recname
+                     ,p_tab_parts.part_id
+                     ,p_tab_parts.part_name
+                     ,p_part_name);
       ELSIF p_subpart_type = 'L' THEN
-        tab_listparts(p_type, p_recname
+        tab_listsubparts(p_type, p_recname
                      ,p_tab_parts.part_id
                      ,p_tab_parts.part_name
                      ,p_part_name);
@@ -3989,8 +4144,13 @@ BEGIN
           ins_line(p_type,l_part_def);
         END LOOP;
         ins_line(p_type,')');
+      ELSIF p_subpart_type = 'R' THEN
+        tab_rangesubparts(p_type, p_recname
+                     ,p_part_id
+                     ,l_part_name
+                     ,p_part_name);
       ELSIF p_subpart_type = 'L' THEN
-        tab_listparts(p_type, p_recname
+        tab_listsubparts(p_type, p_recname
                      ,p_part_id
                      ,l_part_name
                      ,p_part_name);
@@ -4153,10 +4313,15 @@ BEGIN
       END LOOP;
       ins_line(p_type,')');
     ELSIF p_subpart_type = 'L' THEN
-      tab_listparts(p_type, p_recname
+      tab_listsubparts(p_type, p_recname
                    ,p_tab_parts.part_id
                    ,p_tab_parts.part_name
-		,p_part_name);
+                   ,p_part_name);
+    ELSIF p_subpart_type = 'R' THEN
+      tab_rangesubparts(p_type, p_recname
+                   ,p_tab_parts.part_id
+                   ,p_tab_parts.part_name
+                   ,p_part_name);
     END IF;
 
 -- second partition in split
@@ -4182,7 +4347,12 @@ BEGIN
       END LOOP;
       ins_line(p_type,')');
     ELSIF p_subpart_type = 'L' THEN
-      tab_listparts(p_type, p_recname
+      tab_listsubparts(p_type, p_recname
+                   ,p_tab_parts.part_id
+                   ,p_tab_parts.part_name2
+                   ,p_part_name);
+    ELSIF p_subpart_type = 'R' THEN
+      tab_rangesubparts(p_type, p_recname
                    ,p_tab_parts.part_id
                    ,p_tab_parts.part_name2
                    ,p_part_name);
@@ -4342,6 +4512,10 @@ PROCEDURE part_tables(p_part_id VARCHAR2 DEFAULT ''
 						l_schema1,p_tables.src_table_name);
 			ELSIF p_tables.part_type = 'L' THEN
 	                        ins_line(k_build,'PARTITION BY LIST('||p_tables.part_column||')');
+				IF p_tables.subpart_type = 'R' AND --21.10.2014 add list sub range partitioning
+                                   p_tables.subpart_column IS NOT NULL THEN
+                	                ins_line(k_build,'SUBPARTITION BY RANGE ('||p_tables.subpart_column||')');
+                        	END IF;
 	                        tab_part_lists(k_build,p_tables.recname,p_tables.part_id,
 				          p_tables.subpart_type,p_tables.hash_partitions,l_arch_flag);
 			ELSIF p_tables.part_type = 'H' AND 
@@ -5387,7 +5561,7 @@ END exec_sql;
 	END;
 
 ---------------------------------------------------------------
-	PROCEDURE ddl_gfc_part_range_lists
+	PROCEDURE ddl_gfc_part_subparts
 	(p_gtt BOOLEAN DEFAULT FALSE) 
 	IS
 		l_sql VARCHAR2(1000 CHAR);
@@ -5401,13 +5575,13 @@ END exec_sql;
 		IF p_gtt THEN
 			l_sql := l_sql||' GLOBAL TEMPORARY';
 		END IF;
-		l_sql := l_sql||l_lf||'TABLE gfc_part_range_lists';
+		l_sql := l_sql||l_lf||'TABLE gfc_part_subparts';
 		l_sql := l_sql||l_lf||'(part_id         VARCHAR2(8 CHAR) NOT NULL'; -- iD of partitioning schema
-		l_sql := l_sql||l_lf||',range_name      VARCHAR2(30 CHAR) NOT NULL'; -- this goes into the partition names
-		l_sql := l_sql||l_lf||',list_name       VARCHAR2(30 CHAR) NOT NULL'; -- this goes into the partition names
+		l_sql := l_sql||l_lf||',part_name       VARCHAR2(30 CHAR) NOT NULL'; -- this goes into the partition names
+		l_sql := l_sql||l_lf||',subpart_name    VARCHAR2(30 CHAR) NOT NULL'; -- this goes into the partition names
 		l_sql := l_sql||l_lf||',build           VARCHAR2(1 CHAR) DEFAULT ''Y'' NOT NULL';
-		l_sql := l_sql||l_lf||' CONSTRAINT gfc_part_range_lists_build CHECK (build IN(''Y'',''N''))';
-		l_sql := l_sql||l_lf||',CONSTRAINT gfc_part_range_Lists PRIMARY KEY(part_id, range_name, list_name)';
+		l_sql := l_sql||l_lf||' CONSTRAINT gfc_part_subparts_build CHECK (build IN(''Y'',''N''))';
+		l_sql := l_sql||l_lf||',CONSTRAINT gfc_part_subparts PRIMARY KEY(part_id, part_name, subpart_name)';
 		l_sql := l_sql||l_lf||')';
 		exec_sql(l_sql);
 
@@ -5587,7 +5761,7 @@ BEGIN
   ddl_gfc_part_tables(p_gtt);
   ddl_gfc_part_indexes(p_gtt);
   ddl_gfc_part_lists(p_gtt);
-  ddl_gfc_part_range_lists(p_gtt);
+  ddl_gfc_part_subparts(p_gtt);
   ddl_gfc_temp_tables(p_gtt);
   ddl_gfc_ddl_script(p_gtt);
  
@@ -5616,7 +5790,7 @@ BEGIN
   drop_table('gfc_part_ranges');
   drop_table('gfc_temp_tables');
   drop_table('gfc_part_lists');
-  drop_table('gfc_part_range_lists');
+  drop_table('gfc_part_subparts');
 END drop_tables;
 
 ------------------------------------------------------------------------------------------------------
@@ -5874,7 +6048,8 @@ PROCEDURE set_defaults
 						'GFC_PART_RANGES',
 						'GFC_TEMP_TABLES',
 						'GFC_PART_LISTS',
-						'GFC_PART_RANGE_LISTS',
+						'GFC_PART_RANGE_LISTS', --20.10.2014 left for legacy
+						'GFC_PART_SUBPARTS', --20.10.2014 added
 						'GFC_PS_INDEXDEFN', -- 16.6.2010 moved to truncate when all metadata cleared
 						'GFC_PS_KEYDEFN' -- 16.6.2010 moved to truncate when all metadata cleared
 					)
