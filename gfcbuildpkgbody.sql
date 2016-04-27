@@ -4,76 +4,74 @@ rem ***Version History moved to procedure history
 
 set echo on
 spool gfcbuildpkgbody
-
------------------------------------------------------------------------------------------------------------
---Source Code
------------------------------------------------------------------------------------------------------------
---Debug Levels
---5:default debug level
---6:print output
---7:print end of procedure reset action
---9:debug for INS_LINE
------------------------------------------------------------------------------------------------------------
+-------------------------------------------------------------------------------------------------------
+-- source Code
+-------------------------------------------------------------------------------------------------------
+-- debug Levels
+-- 5:default debug level
+-- 6:print output
+-- 7:print end of procedure reset action
+-- 9:debug for INS_LINE
+-------------------------------------------------------------------------------------------------------
 CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
-
------------------------------------------------------------------------------------------------------------
---Spool Files
-k_build  CONSTANT INTEGER := 0; --build peoplesoft tables
-k_index  CONSTANT INTEGER := 1; --rebuild all indexes
-k_stats  CONSTANT INTEGER := 2; --generate CBO stats
-k_alter  CONSTANT INTEGER := 3; --alter main tables, add/split partitions, insert from source table
-k_arch1  CONSTANT INTEGER := 4; --archive build script
-k_arch2  CONSTANT INTEGER := 5; --archive privileges
------------------------------------------------------------------------------------------------------------
+-------------------------------------------------------------------------------------------------------
+-- spool Files
+k_build  CONSTANT INTEGER := 0; -- build peoplesoft tables
+k_index  CONSTANT INTEGER := 1; -- rebuild all indexes
+k_stats  CONSTANT INTEGER := 2; -- generate CBO stats
+k_alter  CONSTANT INTEGER := 3; -- alter main tables, add/split partitions, insert from source table
+k_arch1  CONSTANT INTEGER := 4; -- archive build script
+k_arch2  CONSTANT INTEGER := 5; -- archive privileges
+-------------------------------------------------------------------------------------------------------
 k_module      CONSTANT VARCHAR2(48) := $$PLSQL_UNIT;
-k_sys_context CONSTANT VARCHAR2(10 CHAR) := 'GFC_PSPART'; /*name of system context*/
------------------------------------------------------------------------------------------------------------
+k_sys_context CONSTANT VARCHAR2(10 CHAR) := 'GFC_PSPART'; -- name of system context
+-------------------------------------------------------------------------------------------------------
 l_lineno INTEGER := 0;
-l_dbname VARCHAR2(8 CHAR);              /*PeopleSoft database name*/
-l_oraver NUMBER;                        /*oracle rdbms version*/
---l_parallel_max_servers INTEGER;       /*value of oracle initialisation parameter*/
-l_ptver  VARCHAR2(20 CHAR);             /*peopletools version*/
-l_schema1 VARCHAR2(30 CHAR);            /*schema name*/
-l_schema2 VARCHAR2(31 CHAR);            /*schema name with separator*/
-l_debug BOOLEAN := FALSE;               /*enable debug messages*/
-l_unicode_enabled INTEGER := 0;         /*unicode database*/
-l_database_options INTEGER := 0;        /*database options--6.9.2007*/
-l_lf VARCHAR2(1 CHAR) := CHR(10);       /*line feed character*/
-l_drop_purge_suffix VARCHAR2(10 CHAR);  /*use explicit purge clause on drop table - 14.2.2008*/
-l_use_timestamp BOOLEAN := FALSE;       /*use oracle timestamp columns for time and datetime columns*/
+l_dbname VARCHAR2(8 CHAR);              -- PeopleSoft database name
+l_oraver NUMBER;                        -- oracle rdbms version
+-- l_parallel_max_servers INTEGER;      -- value of oracle initialisation parameter
+l_ptver  VARCHAR2(20 CHAR);             -- peopletools version
+l_schema1 VARCHAR2(30 CHAR);            -- schema name
+l_schema2 VARCHAR2(31 CHAR);            -- schema name with separator
+l_debug BOOLEAN := FALSE;               -- enable debug messages
+l_unicode_enabled INTEGER := 0;         -- unicode database
+l_database_options INTEGER := 0;        -- database options-- 6.9.2007
+l_lf VARCHAR2(1 CHAR) := CHR(10);       -- line feed character
+l_drop_purge_suffix VARCHAR2(10 CHAR);  -- use explicit purge clause on drop table - 14.2.2008
+l_use_timestamp BOOLEAN := FALSE;       -- use oracle timestamp columns for time and datetime columns
 
-/*the following variables are set via the context*/
-l_chardef VARCHAR2(1 CHAR);             /*permit VARCHAR2 character definition*/
-l_logging VARCHAR2(1 CHAR);             /*set to Y to generate build script that logs*/
-l_parallel_index VARCHAR2(1 CHAR);      /*set to true to enable parallel index build*/
-l_parallel_table VARCHAR2(1 CHAR);      /*set to true to enable parallel index build*/
-l_roles VARCHAR2(1 CHAR);               /*should roles be granted*/
-l_scriptid VARCHAR2(8 CHAR);            /*id string in script and project names*/
-l_update_all VARCHAR2(30 CHAR);         /*name of role than can update PS tables*/
-l_read_all VARCHAR2(30 CHAR);           /*name of role than can read PS tables*/
-l_drop_index VARCHAR2(1 CHAR);          /*if true drops index on exiting table, else alters name of index to old*/
-l_pause VARCHAR2(1 CHAR);               /*if true add pause commands to build script*/
-l_explicit_schema VARCHAR2(1 CHAR);     /*all objects schema explicitly named*/
-l_block_sample VARCHAR2(1 CHAR);        /*use block sampling for statistics*/
-l_build_stats VARCHAR2(1 CHAR);         /*if true analyzes tables as it builds them*/
-l_deletetempstats VARCHAR2(1 CHAR);     /*if true delete and in ORacle 10 also lock stats on temp tables*/
-l_longtoclob VARCHAR2(1 CHAR);          /*if Y then partition and convert longs to clobs if override schema*/
---l_ddltrigger VARCHAR2(30 CHAR);       /*name of trigger (T_LOCK) that locks DDL on partitioned objects - removed 5.2.2013*/
-l_ddlenable VARCHAR2(200);              /*command to enable DDL - added 5.2.2013*/
-l_ddldisable VARCHAR2(200);             /*command to disable DDL - added 5.2.2013*/
-l_drop_purge VARCHAR2(1 CHAR);          /*use explicit purge clause on drop table - 14.2.2008*/
-l_forcebuild VARCHAR2(1 CHAR);          /*if true then force build even if structure matches DB*/
-l_desc_index VARCHAR2(1 CHAR);          /*Y to force desc index, N to disable, null to follow PS default*/
-l_repopdfltsub VARCHAR2(1 CHAR);        /*Y to force move data from old to new default list subpartition*/
-l_repopnewmax VARCHAR2(1 CHAR);         /*Y to force add partition by exchange of max value and reinsert*/
-l_debug_level INTEGER := 0;             /*variable to hold debug level of package*/
+-- the following variables are set via the context
+l_chardef VARCHAR2(1 CHAR);             -- permit VARCHAR2 character definition
+l_logging VARCHAR2(1 CHAR);             -- set to Y to generate build script that logs
+l_parallel_index VARCHAR2(1 CHAR);      -- set to true to enable parallel index build
+l_parallel_table VARCHAR2(1 CHAR);      -- set to true to enable parallel index build
+l_roles VARCHAR2(1 CHAR);               -- should roles be granted
+l_scriptid VARCHAR2(8 CHAR);            -- id string in script and project names
+l_update_all VARCHAR2(30 CHAR);         -- name of role than can update PS tables
+l_read_all VARCHAR2(30 CHAR);           -- name of role than can read PS tables
+l_drop_index VARCHAR2(1 CHAR);          -- if true drops index on exiting table, else alters name of index to old
+l_pause VARCHAR2(1 CHAR);               -- if true add pause commands to build script
+l_explicit_schema VARCHAR2(1 CHAR);     -- all objects schema explicitly named
+l_block_sample VARCHAR2(1 CHAR);        -- use block sampling for statistics
+l_build_stats VARCHAR2(1 CHAR);         -- if true analyzes tables as it builds them
+l_deletetempstats VARCHAR2(1 CHAR);     -- if true delete and in ORacle 10 also lock stats on temp tables
+l_longtoclob VARCHAR2(1 CHAR);          -- if Y then partition and convert longs to clobs if override schema
+-- l_ddltrigger VARCHAR2(30 CHAR);      -- name of trigger (T_LOCK) that locks DDL on partitioned objects - removed 5.2.2013
+l_ddlenable VARCHAR2(200);              -- command to enable DDL - added 5.2.2013
+l_ddldisable VARCHAR2(200);             -- command to disable DDL - added 5.2.2013
+l_drop_purge VARCHAR2(1 CHAR);          -- use explicit purge clause on drop table - 14.2.2008
+l_forcebuild VARCHAR2(1 CHAR);          -- if true then force build even if structure matches DB
+l_desc_index VARCHAR2(1 CHAR);          -- Y to force desc index, N to disable, null to follow PS default
+l_repopdfltsub VARCHAR2(1 CHAR);        -- Y to force move data from old to new default list subpartition
+l_repopnewmax VARCHAR2(1 CHAR);         -- Y to force add partition by exchange of max value and reinsert
+l_debug_level INTEGER := 0;             -- variable to hold debug level of package
 l_debug_indent INTEGER := 0;
 
-l_noalterprefix VARCHAR2(8 CHAR) := ''; /*if true then don't generate alters, just for debug--6.9.2007*/
+l_noalterprefix VARCHAR2(8 CHAR) := ''; -- if true then do not  generate alters, just for debug-- 6.9.2007
 
------------------------------------------------------------------------------------------------------------
---added 26.1.2011 to optionally print debug text during package run time
------------------------------------------------------------------------------------------------------------
+-------------------------------------------------------------------------------------------------------
+-- added 26.1.2011 to optionally print debug text during package run time
+-------------------------------------------------------------------------------------------------------
 PROCEDURE debug_msg(p_text VARCHAR2 DEFAULT ''
                    ,p_debug_level INTEGER DEFAULT 5) IS
 BEGIN
@@ -82,9 +80,9 @@ BEGIN
   END IF;
 END debug_msg;
 
------------------------------------------------------------------------------------------------------------
---added 26.1.2011 to permit debug when setting action
------------------------------------------------------------------------------------------------------------
+-------------------------------------------------------------------------------------------------------
+-- added 26.1.2011 to permit debug when setting action
+-------------------------------------------------------------------------------------------------------
 PROCEDURE set_action(p_action_name VARCHAR2 DEFAULT ''
                     ,p_debug_level INTEGER DEFAULT 5) IS
 BEGIN
@@ -93,9 +91,9 @@ BEGIN
   debug_msg(p_text=>'Setting action to: '||p_action_name,p_debug_level=>p_debug_level);
 END set_action;
 	        
------------------------------------------------------------------------------------------------------------
---added 26.1.2011 to permit debug code when unseting action
------------------------------------------------------------------------------------------------------------
+-------------------------------------------------------------------------------------------------------
+-- added 26.1.2011 to permit debug code when unseting action
+-------------------------------------------------------------------------------------------------------
 PROCEDURE unset_action(p_action_name VARCHAR2 DEFAULT ''
                       ,p_debug_level INTEGER DEFAULT 7) IS
 BEGIN
@@ -106,9 +104,9 @@ BEGIN
   debug_msg(p_text=>'Resetting action to: '||p_action_name,p_debug_level=>p_debug_level);                
 END unset_action;
 
------------------------------------------------------------------------------------------------------------
---display debug code
------------------------------------------------------------------------------------------------------------
+-------------------------------------------------------------------------------------------------------
+-- display debug code
+-------------------------------------------------------------------------------------------------------
 PROCEDURE debug(p_message VARCHAR2) IS
   l_module VARCHAR2(48);
   l_action VARCHAR2(32);
@@ -123,7 +121,7 @@ BEGIN
   unset_action(p_action_name=>l_action);
 END debug;
 
------------------------------------------------------------------------------------------------------------
+-------------------------------------------------------------------------------------------------------
 FUNCTION show_bool(p_bool BOOLEAN) RETURN VARCHAR IS
 BEGIN
   IF p_bool THEN
@@ -133,9 +131,9 @@ BEGIN
   END IF;
 END show_bool;
 
------------------------------------------------------------------------------------------------------------
---version history --need an array
------------------------------------------------------------------------------------------------------------
+-------------------------------------------------------------------------------------------------------
+-- version history -- need an array
+-------------------------------------------------------------------------------------------------------
 PROCEDURE history IS
   l_module VARCHAR2(48);
   l_action VARCHAR2(32);
@@ -145,25 +143,25 @@ BEGIN
 
   banner;
   sys.dbms_output.put_line('03.12.2002 - improved subrecord handling');
-  sys.dbms_output.put_line('11.02.2003 - correction to column sequencing on user'); --some table names change to bring script in line with colaudit
---19.06.2003 - correction to MOD() that processes useedit flags
+  sys.dbms_output.put_line('11.02.2003 - correction to column sequencing on user'); -- some table names change to bring script in line with colaudit
+-- 19.06.2003 - correction to MOD() that processes useedit flags
   sys.dbms_output.put_line('09.07.2003 - nologging facility added');
   sys.dbms_output.put_line('10.07.2003 - oracle version detection added to control fix for 8.1.7.2 bug');
   sys.dbms_output.put_line('05.09.2003 - corrected handling of peoplesoft long character columns');
---8.09.2003 - changed statistics script to only build histograms on indexes columns, and default number of buckets
+-- 8.09.2003 - changed statistics script to only build histograms on indexes columns, and default number of buckets
   sys.dbms_output.put_line('18.09.2003 - added trigger to prevent updates on tables whilst being rebuilt');
   sys.dbms_output.put_line('09.10.2003 - tables and indexes set to logging enabled and parallel disabled, parallel control variable added');
---9.10.2003 - grants to PS_READ_ALL and PS_UPDATE_ALL roles added to vanilla version
-  sys.dbms_output.put_line('28.10.2003 - supress partitioning for tables with long columns'); --additional partitioned table
+-- 9.10.2003 - grants to PS_READ_ALL and PS_UPDATE_ALL roles added to vanilla version
+  sys.dbms_output.put_line('28.10.2003 - supress partitioning for tables with long columns'); -- additional partitioned table
   sys.dbms_output.put_line('29.10.2003 - pt version detection to enable new PT8.4 features');
   sys.dbms_output.put_line('04.11.2003 - oracle 9i features, role name control');
   sys.dbms_output.put_line('17.11.2003 - rename/drop index');
   sys.dbms_output.put_line('07.01.2004 - explicit schema name, script control');
   sys.dbms_output.put_line('22.03.2004 - oracle 9 varchars in characters');
   sys.dbms_output.put_line('27.09.2004 - suppress disabled index build, but force disabled index to drop');
-  sys.dbms_output.put_line('18.04.2005 - support for PeopleSoft temporary tables'); --backported from gtbuild.sql
---22.06.2005 - cloned from GPBUILD.sql
---25.07.2006 - applied GPBUILD corrections, and remove chartfield fudge
+  sys.dbms_output.put_line('18.04.2005 - support for PeopleSoft temporary tables'); -- backported from gtbuild.sql
+-- 22.06.2005 - cloned from GPBUILD.sql
+-- 25.07.2006 - applied GPBUILD corrections, and remove chartfield fudge
   sys.dbms_output.put_line('05.12.2006 - added handling for hash-partitioned only tables');
   sys.dbms_output.put_line('13.12.2006 - remove partitioning column check');
   sys.dbms_output.put_line('06.09.2007 - enhancement for PeopleTools 8.48, support partitioned function based indexes');
@@ -191,23 +189,24 @@ BEGIN
   sys.dbms_output.put_line('08.03.2012 - Support for partitioning PeopleSoft history tables');
   sys.dbms_output.put_line('29.06.2012 - Add support non-partition source tables');
   sys.dbms_output.put_line('01.11.2012 - Enable parallel DML during copy operation');
---sys.dbms_output.put_line('01.11.2012 - Minor fix for parallel DML');
+-- sys.dbms_output.put_line('01.11.2012 - Minor fix for parallel DML');
   sys.dbms_output.put_line('30.01.2013 - Bugfix Temp Table Column List');
   sys.dbms_output.put_line('05.02.2013 - Change to DDL trigger control');
   sys.dbms_output.put_line('04.03.2013 - Remove insert/select on table with source table from alter script');
---sys.dbms_output.put_line('11.03.2013 - Fix storage clause of 2nd partition in partition split');
+-- sys.dbms_output.put_line('11.03.2013 - Fix storage clause of 2nd partition in partition split');
   sys.dbms_output.put_line('12.03.2013 - Option to exchange maxvalue range partition out and reinsert data');
   sys.dbms_output.put_line('15.03.2013 - Add archive flag processing to add subpartition processing');
   sys.dbms_output.put_line('22.03.2013 - Add archive insert script to incrementally populate archive tables');
   sys.dbms_output.put_line('27.03.2013 - Global Partition Index Archive/Purge fix');
   sys.dbms_output.put_line('15.04.2013 - Support for Oracle Timestamp column type added');
   sys.dbms_output.put_line('14.08.2013 - Global Temporary Tables not supressed by restartable AE with 0 instances');
+  sys.dbms_output.put_line('28.08.2013 - Fix to drop all not just partitioned indexes on table rebuild');
   dbms_application_info.set_module(module_name=>l_module, action_name=>l_action);
 END history;
 
------------------------------------------------------------------------------------------------------------
---read defaults from contexts
------------------------------------------------------------------------------------------------------------
+-------------------------------------------------------------------------------------------------------
+-- read defaults from contexts
+-------------------------------------------------------------------------------------------------------
 PROCEDURE reset_variables IS
 l_module VARCHAR2(48);
 l_action VARCHAR2(32);
@@ -215,39 +214,39 @@ BEGIN
   dbms_application_info.read_module(module_name=>l_module, action_name=>l_action);
   set_action(p_action_name=>'RESET_VARIABLES');
 
-  l_chardef := 'N';                /*permit VARCHAR2 character definition*/
-  l_logging := 'N';                /*set to Y to generate build script that logs*/
-  l_parallel_table := 'Y';         /*set to true to enable parallelism on table copy*/
-  l_parallel_index := 'Y';         /*set to true to enable parallel index build*/
-  l_roles := 'N';                  /*should roles be granted*/
-  l_scriptid := 'GFCBUILD';        /*id string in script and project names*/
-  l_update_all := 'PS_UPDATE_ALL'; /*name of role than can update PS tables*/
-  l_read_all := 'PS_READ_ALL';     /*name of role than can read PS tables*/
-  l_drop_index := 'Y';             /*if true drops index on exiting table, else alters name of index to old*/
-  l_pause := 'N';                  /*if true add pause commands to build script*/
-  l_explicit_schema := 'Y';        /*all objects schema explicitly named*/
-  l_block_sample := 'Y';           /*use block sampling for statistics*/
-  l_build_stats := 'N';            /*if true analyzes tables as it builds them*/
-  l_deletetempstats := 'Y';        /*if true delete and in ORacle 10 also lock stats on temp tables*/
-  l_longtoclob := 'N';             /*if Y then partition and convert longs to clobs if override schema*/
---l_ddltrigger := '';              /*name of trigger (T_LOCK) that locks DDL on partitioned objects - removed 5.2.2013*/
-  l_ddlenable := '';               /*command to enable DDL - added 5.2.2013*/
-  l_ddldisable := '';              /*command to disable DDL - added 5.2.2013*/
-  l_drop_purge := 'Y';             /*use explicit purge clause on drop table - 14.2.2008*/
-  l_noalterprefix := '';           /*if true then don't generate alters, just for debug--6.9.2007*/
-  l_forcebuild := 'Y';             /*if true then force build even if structure matches DB*/
-  l_desc_index := 'Y';             /*Y to force desc index, N to disable, null to follow PS default*/
-  l_repopdfltsub := 'N';           /*by default will just exchange default subpartition back*/
-  l_repopnewmax := 'N';            /*by default split maxvalue partition rather than exchange and reinsert - added 11.3.2013*/
-  l_debug_level := 0;		   /*default debug level is 0*/
+  l_chardef := 'N';                -- permit VARCHAR2 character definition
+  l_logging := 'N';                -- set to Y to generate build script that logs
+  l_parallel_table := 'Y';         -- set to true to enable parallelism on table copy
+  l_parallel_index := 'Y';         -- set to true to enable parallel index build
+  l_roles := 'N';                  -- should roles be granted
+  l_scriptid := 'GFCBUILD';        -- id string in script and project names
+  l_update_all := 'PS_UPDATE_ALL'; -- name of role than can update PS tables
+  l_read_all := 'PS_READ_ALL';     -- name of role than can read PS tables
+  l_drop_index := 'Y';             -- if true drops index on exiting table, else alters name of index to old
+  l_pause := 'N';                  -- if true add pause commands to build script
+  l_explicit_schema := 'Y';        -- all objects schema explicitly named
+  l_block_sample := 'Y';           -- use block sampling for statistics
+  l_build_stats := 'N';            -- if true analyzes tables as it builds them
+  l_deletetempstats := 'Y';        -- if true delete and in ORacle 10 also lock stats on temp tables
+  l_longtoclob := 'N';             -- if Y then partition and convert longs to clobs if override schema
+-- l_ddltrigger := '';             -- name of trigger (T_LOCK) that locks DDL on partitioned objects - removed 5.2.2013
+  l_ddlenable := '';               -- command to enable DDL - added 5.2.2013
+  l_ddldisable := '';              -- command to disable DDL - added 5.2.2013
+  l_drop_purge := 'Y';             -- use explicit purge clause on drop table - 14.2.2008
+  l_noalterprefix := '';           -- if true then do not  generate alters, just for debug-- 6.9.2007
+  l_forcebuild := 'Y';             -- if true then force build even if structure matches DB
+  l_desc_index := 'Y';             -- y to force desc index, N to disable, null to follow PS default
+  l_repopdfltsub := 'N';           -- by default will just exchange default subpartition back
+  l_repopnewmax := 'N';            -- by default split maxvalue partition rather than exchange and reinsert - added 11.3.2013
+  l_debug_level := 0;		   -- default debug level is 0
 
   unset_action(p_action_name=>l_action);
 
 END reset_variables;
 
------------------------------------------------------------------------------------------------------------
---read defaults from contexts
------------------------------------------------------------------------------------------------------------
+-------------------------------------------------------------------------------------------------------
+-- read defaults from contexts
+-------------------------------------------------------------------------------------------------------
 PROCEDURE read_context IS
   l_module VARCHAR2(48);
   l_action VARCHAR2(32); 
@@ -271,11 +270,11 @@ BEGIN
   l_build_stats      := NVL(SYS_CONTEXT(k_sys_context,'build_stats'    ),l_build_stats);
   l_deletetempstats  := NVL(SYS_CONTEXT(k_sys_context,'deletetempstats'),l_deletetempstats);
   l_longtoclob       := NVL(SYS_CONTEXT(k_sys_context,'longtoclob'     ),l_longtoclob);
---l_ddltrigger       := NVL(SYS_CONTEXT(k_sys_context,'ddltrigger'     ),l_ddltrigger);
+-- l_ddltrigger       := NVL(SYS_CONTEXT(k_sys_context,'ddltrigger'     ),l_ddltrigger);
   l_ddlenable        := NVL(SYS_CONTEXT(k_sys_context,'ddlenable'      ),l_ddlenable);
   l_ddldisable       := NVL(SYS_CONTEXT(k_sys_context,'ddldisable'     ),l_ddldisable);
   l_drop_purge       := NVL(SYS_CONTEXT(k_sys_context,'drop_purge'     ),l_drop_purge);
---l_noalterprefix    := NVL(SYS_CONTEXT(k_sys_context,'noalterprefix'  ),l_noalterprefix);
+-- l_noalterprefix    := NVL(SYS_CONTEXT(k_sys_context,'noalterprefix'  ),l_noalterprefix);
   l_forcebuild       := NVL(SYS_CONTEXT(k_sys_context,'forcebuild'     ),l_forcebuild);
   l_desc_index       := NVL(SYS_CONTEXT(k_sys_context,'desc_index'     ),l_desc_index);
   l_repopdfltsub     := NVL(SYS_CONTEXT(k_sys_context,'repopdfltsub'   ),l_repopdfltsub);
@@ -286,9 +285,9 @@ BEGIN
   unset_action(p_action_name=>l_action);
 END read_context;
 
------------------------------------------------------------------------------------------------------------
---write defaults to context
------------------------------------------------------------------------------------------------------------
+-------------------------------------------------------------------------------------------------------
+-- write defaults to context
+-------------------------------------------------------------------------------------------------------
 PROCEDURE write_context IS
   l_module VARCHAR2(48);
   l_action VARCHAR2(32);
@@ -311,11 +310,11 @@ BEGIN
   dbms_session.set_context(k_sys_context,'build_stats'      ,l_build_stats);
   dbms_session.set_context(k_sys_context,'deletetempstats'  ,l_deletetempstats);
   dbms_session.set_context(k_sys_context,'longtoclob'       ,l_longtoclob);
---dbms_session.set_context(k_sys_context,'ddltrigger'       ,l_ddltrigger);
+-- dbms_session.set_context(k_sys_context,'ddltrigger'       ,l_ddltrigger);
   dbms_session.set_context(k_sys_context,'ddlenable'        ,l_ddlenable);
   dbms_session.set_context(k_sys_context,'ddldisable'       ,l_ddldisable);
   dbms_session.set_context(k_sys_context,'drop_purge'       ,l_drop_purge);
---dbms_session.set_context(k_sys_context,'noalterprefix'    ,l_noalterprefix);
+-- dbms_session.set_context(k_sys_context,'noalterprefix'    ,l_noalterprefix);
   dbms_session.set_context(k_sys_context,'forcebuild'       ,l_forcebuild);
   dbms_session.set_context(k_sys_context,'desc_index'       ,l_desc_index);
   dbms_session.set_context(k_sys_context,'repopdfltsub'     ,l_repopdfltsub);
@@ -325,9 +324,9 @@ BEGIN
   unset_action(p_action_name=>l_action);
 END write_context;
 
------------------------------------------------------------------------------------------------------------
---get name of PeopleSoft database
------------------------------------------------------------------------------------------------------------
+-------------------------------------------------------------------------------------------------------
+-- get name of PeopleSoft database
+-------------------------------------------------------------------------------------------------------
 PROCEDURE dbname IS
   l_module VARCHAR2(48);
   l_action VARCHAR2(32);
@@ -350,9 +349,9 @@ BEGIN
 
   unset_action(p_action_name=>l_action);
 END dbname;
------------------------------------------------------------------------------------------------------------
---get version of Oracle
------------------------------------------------------------------------------------------------------------
+-------------------------------------------------------------------------------------------------------
+-- get version of Oracle
+-------------------------------------------------------------------------------------------------------
 PROCEDURE oraver IS
   l_module VARCHAR2(48);
   l_action VARCHAR2(32);
@@ -376,18 +375,18 @@ BEGIN
     l_drop_purge_suffix := ' PURGE';
   END IF;
 
---SELECT  TO_NUMBER(value)
---INTO    l_parallel_max_servers
+-- sELECT  TO_NUMBER(value)
+-- iNTO    l_parallel_max_servers
 --FROM    v$parameter
---WHERE   name = 'parallel_max_servers'
+-- wHERE   name = 'parallel_max_servers'
 --;
 
   unset_action(p_action_name=>l_action);
 END oraver;
 
------------------------------------------------------------------------------------------------------------
---get version of PeopleTools
------------------------------------------------------------------------------------------------------------
+-------------------------------------------------------------------------------------------------------
+-- get version of PeopleTools
+-------------------------------------------------------------------------------------------------------
 PROCEDURE ptver IS
   l_module VARCHAR2(48);
   l_action VARCHAR2(32);
@@ -395,7 +394,7 @@ BEGIN
   dbms_application_info.read_module(module_name=>l_module, action_name=>l_action);
   set_action(p_action_name=>'PTVER');
 
-  --6.9.2007 added PT8.48 unicode/long logic
+  -- 6.9.2007 added PT8.48 unicode/long logic
   SELECT  toolsrel, unicode_enabled
   INTO    l_ptver, l_unicode_enabled
   FROM    psstatus
@@ -407,13 +406,13 @@ BEGIN
 
   IF l_ptver >= '8.48' THEN
     l_logging := 'N';
-    --10.12.2010 in PT8.50 bit 5 of database options is used for something else, so just look at bit 1
-    --15.4.2013 - bit 1 indicates CLOB/BLOB usage and character semantics for unicode, bit 5 indicate timestamp for time and datatime fields.
+    -- 10.12.2010 in PT8.50 bit 5 of database options is used for something else, so just look at bit 1
+    -- 15.4.2013 - bit 1 indicates CLOB/BLOB usage and character semantics for unicode, bit 5 indicate timestamp for time and datatime fields.
     EXECUTE IMMEDIATE 'SELECT database_options FROM psstatus' INTO l_database_options;
 
     IF BITAND(l_database_options,2) = 2 THEN
-      l_unicode_enabled := 0; /*6.9.2007:character semantics*/
-      l_longtoclob := 'Y'; /*use clobs*/              
+      l_unicode_enabled := 0; -- 6.9.2007-character semantics
+      l_longtoclob := 'Y'; -- use clobs              
     END IF;
 
     IF BITAND(l_database_options,32) = 32 THEN
@@ -430,9 +429,9 @@ BEGIN
   unset_action(p_action_name=>l_action);
 END ptver;
 
------------------------------------------------------------------------------------------------------------
---make a project of the interested tables
------------------------------------------------------------------------------------------------------------
+-------------------------------------------------------------------------------------------------------
+-- make a project of the interested tables
+-------------------------------------------------------------------------------------------------------
 PROCEDURE gfc_project(p_projectname VARCHAR2 DEFAULT '') IS
   l_version INTEGER;
   l_version2 INTEGER;
@@ -512,7 +511,7 @@ BEGIN
             ||'VERSION, PROJECTNAME, TGTSERVERNAME, TGTDBNAME, TGTOPRID, '
             ||'TGTOPRACCT, REPORTFILTER, TGTORIENTATION, COMPARETYPE, KEEPTGT, '
             ||'COMMITLIMIT, MAINTPROJ, COMPRELEASE, COMPRELDTTM,';
-  IF l_ptver >= '8.4' THEN /*new column in pt8.4*/
+  IF l_ptver >= '8.4' THEN -- new column in pt8.4
           l_sql := l_sql || 'OBJECTOWNERID, ';
   END IF;
   l_sql := l_sql  ||'LASTUPDDTTM, LASTUPDOPRID, PROJECTDESCR, '
@@ -520,7 +519,7 @@ BEGIN
         ||'VALUES ('||l_version||','''||l_projectname||''','' '','' '','' '','
         ||''' '',16232832,0,1,3,'
         ||'50,0,'' '', null,' ;
-  IF l_ptver >= '8.4' THEN /*new column in pt8.4*/
+  IF l_ptver >= '8.4' THEN -- new column in pt8.4
       l_sql := l_sql || ''' '',' ;
   END IF;
       l_sql := l_sql  ||'sysdate,''PS'',''Partitioned + Global Temp Tabs'', '' '', NULL, '
@@ -532,10 +531,10 @@ BEGIN
   unset_action(p_action_name=>l_action);
 END gfc_project;
 
------------------------------------------------------------------------------------------------------------
---populate list of tables
---19.6.2003 list of tables reorganised
------------------------------------------------------------------------------------------------------------
+-------------------------------------------------------------------------------------------------------
+-- populate list of tables
+-- 19.6.2003 list of tables reorganised
+-------------------------------------------------------------------------------------------------------
 PROCEDURE gfc_ps_tables
 (p_part_id VARCHAR2 DEFAULT ''
 ,p_recname VARCHAR2 DEFAULT ''
@@ -547,7 +546,7 @@ BEGIN
   dbms_application_info.read_module(module_name=>l_module, action_name=>l_action);
   set_action(p_action_name=>'GFC_PS_TABLES');
 
-  MERGE INTO gfc_ps_tables u --19.4.2013 converted to merge statement
+  MERGE INTO gfc_ps_tables u -- 19.4.2013 converted to merge statement
   USING (
   SELECT  r.recname, r.rectype
   ,       DECODE(r.sqltablename,' ','PS_'||r.recname,r.sqltablename) table_name
@@ -557,11 +556,11 @@ BEGIN
   FROM    psrecdefn r
   ,       gfc_part_tables p
   WHERE   r.rectype = 0
-  AND     r.recname = p.recname --reverted 29.6.2012 
+  AND     r.recname = p.recname -- reverted 29.6.2012 
   AND     (p.part_id LIKE p_part_id OR p_part_id IS NULL)
   AND     (p.recname LIKE p_recname OR p_recname IS NULL)
   AND     (p_rectype IN('A','P') OR p_rectype IS NULL)
-  UNION --add archive record - split out 29.6.2012 to support non-partition source table name
+  UNION -- add archive record - split out 29.6.2012 to support non-partition source table name
   SELECT  r.recname, r.rectype
   ,       DECODE(r.sqltablename,' ','PS_'||r.recname,r.sqltablename) table_name
   ,      'P' table_type
@@ -572,15 +571,15 @@ BEGIN
   WHERE   r.rectype = 0
   AND     r.recname = p.arch_recname 
   AND     (p.part_id LIKE p_part_id OR p_part_id IS NULL)
-  AND     (  p.arch_recname LIKE p_recname --removed 29.6.2012
+  AND     (  p.arch_recname LIKE p_recname -- removed 29.6.2012
           OR p_recname IS NULL)
   AND  (p_rectype IN('A','P') OR p_rectype IS NULL)
-  UNION --this query adds source tables
+  UNION -- this query adds source tables
   SELECT  r.recname, r.rectype,
           DECODE(r.sqltablename,' ','PS_'||r.recname,r.sqltablename) table_name,
           'P' table_type
   ,       0 temptblinstances
-  ,       '' src_table_schema --29.6.2012 might add this field in the future
+  ,       '' src_table_schema -- 29.6.2012 might add this field in the future
   FROM    psrecdefn r
   ,       gfc_part_tables p
   WHERE   r.rectype = 0
@@ -588,7 +587,7 @@ BEGIN
   AND     (p.part_id LIKE p_part_id OR p_part_id IS NULL)
   AND     (p.recname LIKE p_recname OR p_recname IS NULL)
   AND     (p_rectype IN('A','P') OR p_rectype IS NULL)
-  UNION --add any temp records
+  UNION -- add any temp records
   SELECT  r.recname, r.rectype
   ,       DECODE(r.sqltablename,' ','PS_'||r.recname,r.sqltablename) table_name
   ,       'T' table_type
@@ -605,8 +604,8 @@ BEGIN
           ,   psaeappltemptbl a
           WHERE  a.ae_applid = b.ae_applid
           AND  b.ae_disable_restart = 'N'
-          AND  b.ae_appllibrary = 'N' /*added 14.8.2013-do not suppress GTT if restartable AE appl library refs temp tables*/
-          AND  b.temptblinstances > 0 /*added 14.8.2013-do not suppress GTT if restartable AE subprogram refs temp tables with 0 instances*/
+          AND  b.ae_appllibrary = 'N' -- added 14.8.2013-do not suppress GTT if restartable AE appl library refs temp tables
+          AND  b.temptblinstances > 0 -- added 14.8.2013-do not suppress GTT if restartable AE subprogram refs temp tables with 0 instances
           )
     )
           )
@@ -624,11 +623,11 @@ BEGIN
   VALUES (s.recname, s.rectype, s.table_name, s.table_type, s.temptblinstances, s.override_schema)
   ;
 
------------------------------------------------------------------------------------------------------------
---17.5.2010 this test was previously in the above statement - but PeopleSoft delivers temp tables that  
---are not declared to a process, and the first part looks for tables associated with a non-restartable
---process
------------------------------------------------------------------------------------------------------------
+-------------------------------------------------------------------------------------------------------
+-- 17.5.2010 this test was previously in the above statement - but PeopleSoft delivers temp tables that  
+-- are not declared to a process, and the first part looks for tables associated with a non-restartable
+-- process
+-------------------------------------------------------------------------------------------------------
 --        AND     r.recname IN(
 --  SELECT   a.recname
 --  FROM  psaeappldefn b
@@ -642,11 +641,11 @@ BEGIN
 --  WHERE   a.ae_applid = b.ae_applid
 --  AND  b.ae_disable_restart = 'N'
 --          )
------------------------------------------------------------------------------------------------------------
+-------------------------------------------------------------------------------------------------------
 
------------------------------------------------------------------------------------------------------------
---17.5.2010 correction to update to handle tables not declared to AEs
------------------------------------------------------------------------------------------------------------
+-------------------------------------------------------------------------------------------------------
+-- 17.5.2010 correction to update to handle tables not declared to AEs
+-------------------------------------------------------------------------------------------------------
   UPDATE gfc_ps_tables g
   SET    temptblinstances = (
          SELECT NVL(o.temptblinstances+t.temptblinstances,0) temptblinstances
@@ -658,17 +657,17 @@ BEGIN
   WHERE  g.rectype = 7
   ;
 
---30.01.2013 -- two inserts first puts in temp and permanent tables.
+-- 30.01.2013 -- two inserts first puts in temp and permanent tables.
   INSERT INTO gfc_ora_tab_columns
            (table_name, column_name, column_id)
   SELECT  c.table_name, c.column_name, c.column_id
   FROM    user_tab_columns c
   ,       gfc_ps_tables g
-  ,       gfc_temp_tables t --added 30.1.2013
+  ,       gfc_temp_tables t -- added 30.1.2013
   WHERE   g.table_name = c.table_name
   AND     t.recname = g.recname
   AND     (g.recname LIKE p_recname OR p_recname IS NULL) 
-  AND NOT EXISTS( --18.12.2008 -- added criteria on p_recname to prevent duplicate inserts
+  AND NOT EXISTS( -- 18.12.2008 -- added criteria on p_recname to prevent duplicate inserts
           SELECT 'x'
           FROM  gfc_ora_tab_columns o
           WHERE  o.table_name = c.table_name
@@ -683,14 +682,14 @@ BEGIN
   ,      gfc_part_tables p
   WHERE  g.table_name = c.table_name
   AND    (  g.recname = p.recname
-         OR g.table_name = p.src_table_name --29.6.2012 added to support nonpartitioned source tablename
+         OR g.table_name = p.src_table_name -- 29.6.2012 added to support nonpartitioned source tablename
          ) 
   AND    (p.part_id LIKE p_part_id OR p_part_id IS NULL)
   AND    (  p.recname LIKE p_recname 
          OR p.arch_recname LIKE p_recname 
          OR p_recname IS NULL
          )
-  AND NOT EXISTS( --18.12.2008 -- added criteria on p_recname to prevent duplicate inserts
+  AND NOT EXISTS( -- 18.12.2008 -- added criteria on p_recname to prevent duplicate inserts
          SELECT 'x'
          FROM  gfc_ora_tab_columns o
          WHERE  o.table_name = c.table_name
@@ -699,9 +698,9 @@ BEGIN
   unset_action(p_action_name=>l_action);
 END gfc_ps_tables;
 
------------------------------------------------------------------------------------------------------------
---populate table of columns
------------------------------------------------------------------------------------------------------------
+-------------------------------------------------------------------------------------------------------
+-- populate table of columns
+-------------------------------------------------------------------------------------------------------
 PROCEDURE gfc_ps_tab_columns
 (p_part_id VARCHAR2 DEFAULT ''
 ,p_recname VARCHAR2 DEFAULT ''
@@ -712,16 +711,16 @@ BEGIN
   dbms_application_info.read_module(module_name=>l_module, action_name=>l_action);
   set_action(p_action_name=>'GFC_PS_TAB_COLUMNS');
 
-  INSERT INTO gfc_ps_tab_columns --30.1.2013 added to make sure any temp tables also go in
+  INSERT INTO gfc_ps_tab_columns -- 30.1.2013 added to make sure any temp tables also go in
   (      recname, fieldname, useedit, fieldnum, subrecname)
   SELECT DISTINCT r.recname, f.fieldname, f.useedit, f.fieldnum, r.recname
   FROM   gfc_ps_tables r
-  ,	 gfc_temp_tables t --30.1.2013 this query only does temp record
+  ,	 gfc_temp_tables t -- 30.1.2013 this query only does temp record
   ,      psrecfielddb f
   WHERE  r.recname = f.recname
   AND    t.recname = r.recname
   AND    (r.recname LIKE p_recname OR p_recname IS NULL) 
-  AND NOT EXISTS(--18.12.2008 -- added criteria on p_recname to prevent duplicate inserts
+  AND NOT EXISTS(-- 18.12.2008 -- added criteria on p_recname to prevent duplicate inserts
          SELECT 'x' 
          FROM   gfc_ps_tab_columns c
          WHERE  c.recname = f.recname
@@ -737,13 +736,13 @@ BEGIN
   WHERE   r.recname = f.recname
   AND     (  r.recname = p.recname 
           OR r.table_name = p.src_table_name
-          ) --added 29.6.2012 to support non-partition source table name
+          ) -- added 29.6.2012 to support non-partition source table name
   AND     (p.part_id = p_part_id OR p_part_id IS NULL)
   AND     (  p.recname LIKE p_recname 
           OR p.arch_recname LIKE p_recname 
           OR p_recname IS NULL
           )
-  AND NOT EXISTS( --18.12.2008 -- added criteria on p_recname to prevent duplicate inserts
+  AND NOT EXISTS( -- 18.12.2008 -- added criteria on p_recname to prevent duplicate inserts
           SELECT 'x'
           FROM   gfc_ps_tab_columns c
           WHERE  c.recname = f.recname
@@ -753,9 +752,9 @@ BEGIN
   unset_action(p_action_name=>l_action);
 END gfc_ps_tab_columns;
 
------------------------------------------------------------------------------------------------------------
---populate table of indexes - dmk
------------------------------------------------------------------------------------------------------------
+-------------------------------------------------------------------------------------------------------
+-- populate table of indexes - dmk
+-------------------------------------------------------------------------------------------------------
 PROCEDURE gfc_ps_indexdefn 
 (p_part_id VARCHAR2 DEFAULT ''
 ,p_recname VARCHAR2 DEFAULT ''
@@ -766,13 +765,13 @@ BEGIN
   dbms_application_info.read_module(module_name=>l_module, action_name=>l_action);
   set_action(p_action_name=>'GFC_PS_INDEXDEFN');
 
-  MERGE INTO gfc_ps_indexdefn u USING ( --16.6.2010 rewritten as merge
+  MERGE INTO gfc_ps_indexdefn u USING ( -- 16.6.2010 rewritten as merge
   SELECT DISTINCT x.recname, x.indexid
   ,      x.subrecname
   ,      x.subindexid
   ,      x.platform_ora
   ,      x.custkeyorder
-  ,      NVL(j.uniqueflag,x.uniqueflag) uniqueflag --6.9.2007 added psindexdefn psindexdefn
+  ,      NVL(j.uniqueflag,x.uniqueflag) uniqueflag -- 6.9.2007 added psindexdefn psindexdefn
   FROM   (
     SELECT c.recname, i.indexid
     ,      c.recname subrecname
@@ -789,7 +788,7 @@ BEGIN
     ON  j.recname = x.recname
     AND j.indexid = x.indexid
   UNION
-  SELECT c.recname, i.indexid --indexes defined on record -- added in case all keys on subrecords
+  SELECT c.recname, i.indexid -- indexes defined on record -- added in case all keys on subrecords
   ,      c.recname subrecname
   ,      i.indexid subindexid
   ,      i.platform_ora
@@ -802,7 +801,7 @@ BEGIN
   UNION
   SELECT  DISTINCT x.recname, x.indexid
   ,       x.subrecname, x.subindexid, i.platform_ora
-  ,       i.custkeyorder, i.uniqueflag --6.9.2007 added psindexdefn fields
+  ,       i.custkeyorder, i.uniqueflag -- 6.9.2007 added psindexdefn fields
   FROM    gfc_ps_alt_ind_cols x
   ,       psindexdefn i
   WHERE   x.indexid BETWEEN '0' AND '9'
@@ -824,7 +823,7 @@ BEGIN
   (s.recname, s.indexid, s.subrecname, s.subindexid, s.platform_ora, s.custkeyorder, s.uniqueflag)
   ;
 
---25.5.2011 --return organisation to Table if not possible to build IOT
+-- 25.5.2011 -- return organisation to Table if not possible to build IOT
   UPDATE  gfc_part_tables t
   SET     t.organization = 'T'
   ,       t.subpart_type = 'N'
@@ -843,9 +842,9 @@ BEGIN
   unset_action(p_action_name=>l_action);
 END gfc_ps_indexdefn;
 
------------------------------------------------------------------------------------------------------------
---populate table of indexes - dmk
------------------------------------------------------------------------------------------------------------
+-------------------------------------------------------------------------------------------------------
+-- populate table of indexes - dmk
+-------------------------------------------------------------------------------------------------------
 PROCEDURE gfc_ps_keydefn
 (p_recname VARCHAR2 DEFAULT ''
 ) IS
@@ -856,18 +855,18 @@ BEGIN
   set_action(p_action_name=>'GFC_PS_KEYDEFN');
   debug_msg('(recname='||p_recname||')',8);
 
-  MERGE INTO gfc_ps_keydefn u USING ( --16.6.2010 rewritten as merge
-  --insert unique and user indexes
+  MERGE INTO gfc_ps_keydefn u USING ( -- 16.6.2010 rewritten as merge
+  -- insert unique and user indexes
   SELECT recname, indexid, keyposn, fieldname, ascdesc
   FROM   gfc_ps_keydefn_vw
-  WHERE  (recname LIKE p_recname OR p_recname IS NULL) --26.1.2011
+  WHERE  (recname LIKE p_recname OR p_recname IS NULL) -- 26.1.2011
   UNION
-  --insert first columns of alternate search key indexes
+  -- insert first columns of alternate search key indexes
   SELECT c.recname, c.indexid, 1, c.fieldname, ascdesc
   FROM   gfc_ps_alt_ind_cols c
   WHERE  (c.recname LIKE p_recname OR p_recname IS NULL) 
   UNION
-  --insert other columns of alternate search key indexes
+  -- insert other columns of alternate search key indexes
   SELECT c.recname, c.indexid, k.fieldposn+1, k.fieldname, k.ascdesc
   FROM   gfc_ps_alt_ind_cols c
   ,      gfc_ps_keydefn_vw k
@@ -888,12 +887,12 @@ BEGIN
   ;
   debug_msg('merged '||SQL%ROWCOUNT||' rows',8);
 
---30.6.2005-remove special processing columns
---DELETE FROM gfc_ps_keydefn
---WHERE fieldname IN('AFFILIATE_INTRA2','CHARTFIELD1','CHARTFIELD2','CHARTFIELD3')
+-- 30.6.2005-remove special processing columns
+-- dELETE FROM gfc_ps_keydefn
+-- wHERE fieldname IN('AFFILIATE_INTRA2','CHARTFIELD1','CHARTFIELD2','CHARTFIELD3')
 --;
 
---correct column sequencing
+-- correct column sequencing
   UPDATE  gfc_ps_keydefn k
   SET     k.keyposn = (SELECT k1.keyposn
                        FROM   pskeydefn k1
@@ -902,7 +901,7 @@ BEGIN
                        AND    k1.fieldname = k.fieldname)
   WHERE (k.recname,k.indexid) IN (
                        SELECT j.recname, j.indexid
-                       FROM   gfc_ps_indexdefn j  --6.9.2007 removed psindexdefn
+                       FROM   gfc_ps_indexdefn j  -- 6.9.2007 removed psindexdefn
                        WHERE  j.custkeyorder = 1
                        AND   (j.recname LIKE p_recname OR p_recname IS NULL) 
                        )
@@ -910,11 +909,11 @@ BEGIN
   debug_msg('update position on '||SQL%ROWCOUNT||' rows',8);
 
 
---remove descending key option on partition and subpartition columns 23.1.2009
---and corrected again for subrecords 3.6.2009
+-- remove descending key option on partition and subpartition columns 23.1.2009
+-- and corrected again for subrecords 3.6.2009
   UPDATE  gfc_ps_keydefn k
-  SET   k.ascdesc = 1 /*is now an ascending column*/
-  WHERE   k.ascdesc = 0 /*is a descending column*/
+  SET   k.ascdesc = 1 -- is now an ascending column
+  WHERE   k.ascdesc = 0 -- is a descending column
   AND EXISTS(
       SELECT 'x'
       FROM   psindexdefn i
@@ -923,7 +922,7 @@ BEGIN
       WHERE  k.recname = f.recname
       AND    f.recname_parent = i.recname
       AND    i.indexid = k.indexid
-      AND    i.uniqueflag = 1 /*it's a unique index*/
+      AND    i.uniqueflag = 1 -- it's a unique index
       AND    p.recname = k.recname
       AND    f.fieldname = k.fieldname
       AND    k.fieldname IN (p.part_column,p.subpart_column)
@@ -935,10 +934,10 @@ BEGIN
   unset_action(p_action_name=>l_action);
 END gfc_ps_keydefn;
 
------------------------------------------------------------------------------------------------------------
---recursively expand and subrecords in the list of columns
------------------------------------------------------------------------------------------------------------
-        PROCEDURE expand_sbr IS
+-------------------------------------------------------------------------------------------------------
+-- recursively expand and subrecords in the list of columns
+-------------------------------------------------------------------------------------------------------
+PROCEDURE expand_sbr IS
             CURSOR c_sbr_col IS
             SELECT *
             FROM   gfc_ps_tab_columns
@@ -951,10 +950,10 @@ END gfc_ps_keydefn;
 
             p_sbr_col c_sbr_col%ROWTYPE;
 
-            l_found_sbr INTEGER :=0; /*number of subrecords found in loop*/
-            l_sbr_cols  INTEGER;     /*number of columns in the subrecord*/
-            l_last_recname VARCHAR2(18 CHAR) := ''; /*name oflast record processed*/
-            l_fieldnum_adj INTEGER := 0; /*field number offset when expanding subrecords*/
+            l_found_sbr INTEGER :=0; -- number of subrecords found in loop
+            l_sbr_cols  INTEGER;     -- number of columns in the subrecord
+            l_last_recname VARCHAR2(18 CHAR) := ''; -- name oflast record processed
+            l_fieldnum_adj INTEGER := 0; --field number offset when expanding subrecords
             l_module VARCHAR2(48);
             l_action VARCHAR2(32);
 	BEGIN
@@ -1011,9 +1010,9 @@ END gfc_ps_keydefn;
 		unset_action(p_action_name=>l_action);
         END expand_sbr;
 
------------------------------------------------------------------------------------------------------------
---shuffle long columns to bottom of record
-        PROCEDURE shuffle_long IS
+-------------------------------------------------------------------------------------------------------
+-- shuffle long columns to bottom of record
+PROCEDURE shuffle_long IS
                 CURSOR c_cols IS
                 SELECT  c.recname, c.fieldname, c.fieldnum
                 FROM    gfc_ps_tab_columns c
@@ -1066,7 +1065,7 @@ END gfc_ps_keydefn;
 		unset_action(p_action_name=>l_action);
         END;
 
---generate the column definition clause for create table DDL
+-- generate the column definition clause for create table DDL
         FUNCTION col_def(p_recname VARCHAR2, p_fieldname VARCHAR2, p_longtoclob VARCHAR) RETURN VARCHAR2 IS
                 l_col_def VARCHAR2(100 CHAR);
 
@@ -1112,7 +1111,7 @@ END gfc_ps_keydefn;
                         END IF;
                 ELSIF p_dbfield.fieldtype IN(4,5,6) THEN
  			IF p_dbfield.fieldtype IN(5,6) AND l_use_timestamp AND l_ptver >= 8.50 AND l_oraver >= 10.0 THEN
-                        	l_datatype := 'TIMESTAMP'; --15.4.2013 time and datetime columns created as timestamp from Apps 9.2 from PT8.50
+                        	l_datatype := 'TIMESTAMP'; -- 15.4.2013 time and datetime columns created as timestamp from Apps 9.2 from PT8.50
 			ELSE
                         	l_datatype := 'DATE';
 			END IF;
@@ -1122,7 +1121,7 @@ END gfc_ps_keydefn;
                         ELSE
                                 IF p_dbfield.length <= 4 THEN
                                         l_datatype := 'SMALLINT';
-				ELSIF p_dbfield.length > 8 THEN --20.2.2008 pt8.47??
+				ELSIF p_dbfield.length > 8 THEN -- 20.2.2008 pt8.47??
 					l_datatype := 'DECIMAL';
 					p_dbfield.length := p_dbfield.length + 1;
                                 ELSE
@@ -1138,17 +1137,17 @@ END gfc_ps_keydefn;
 
                 l_col_def := l_datatype;
                 IF l_datatype = 'VARCHAR2' THEN 
-                        IF l_oraver >= 9.0 AND l_chardef = 'Y' THEN /*in Oracle 9 to provide for unicode VARCHAR2s defined in CHRs*/
+                        IF l_oraver >= 9.0 AND l_chardef = 'Y' THEN -- in Oracle 9 to provide for unicode VARCHAR2s defined in CHRs
                                 l_col_def := l_col_def||'('||p_dbfield.length||' CHAR)';
                         ELSIF l_unicode_enabled = 1 THEN
                                 l_col_def := l_col_def||'('||LEAST(4000,p_dbfield.length*3)||') CHECK(LENGTH('||p_fieldname||')<='||p_dbfield.length||')';
-                        ELSE /*normal*/
+                        ELSE -- normal
                                 l_col_def := l_col_def||'('||p_dbfield.length||')';
                         END IF;
                 ELSIF l_datatype = 'DECIMAL' THEN
                         IF p_dbfield.fieldtype = 2 THEN
                                 l_col_def := l_col_def||'('||(p_dbfield.length-1);
-                        ELSE /*type 3*/
+                        ELSE -- type 3
                                 l_col_def := l_col_def||'('||(p_dbfield.length-2);
                         END IF;
                         IF p_dbfield.decimalpos > 0 THEN
@@ -1166,11 +1165,11 @@ END gfc_ps_keydefn;
 
 		unset_action(p_action_name=>l_action);
                 RETURN l_col_def;
-        END col_def;
+END col_def;
 
------------------------------------------------------------------------------------------------------------
---insert line of script into table
-        PROCEDURE ins_line(p_type NUMBER, p_line VARCHAR2) IS
+-------------------------------------------------------------------------------------------------------
+-- insert line of script into table
+PROCEDURE ins_line(p_type NUMBER, p_line VARCHAR2) IS
 --              PRAGMA AUTONOMOUS_TRANSACTION;
 		l_module VARCHAR2(48);
 		l_action VARCHAR2(32);
@@ -1186,7 +1185,7 @@ END gfc_ps_keydefn;
 		dbms_application_info.read_module(module_name=>l_module, action_name=>l_action);
 		set_action(p_action_name=>'INS_LINE',p_debug_level=>9);
 
-		--if string longer than threshold (100 chars) calculate position of last not in quote space, and cut string there.  
+		-- if string longer than threshold (100 chars) calculate position of last not in quote space, and cut string there.  
  		--Keep cutting until string less than 100 chars and position > 0
 		l_pos := 0;
 		l_last_break := 0;
@@ -1233,9 +1232,9 @@ END gfc_ps_keydefn;
 		unset_action(p_action_name=>l_action,p_debug_level=>9);
         END ins_line;
 
------------------------------------------------------------------------------------------------------------
---insert line of script into table
-        PROCEDURE debug_line(p_type NUMBER, p_line VARCHAR2) IS
+-------------------------------------------------------------------------------------------------------
+-- insert line of script into table
+PROCEDURE debug_line(p_type NUMBER, p_line VARCHAR2) IS
 		l_module VARCHAR2(48);
 		l_action VARCHAR2(32);
 	BEGIN
@@ -1249,9 +1248,9 @@ END gfc_ps_keydefn;
 		unset_action(p_action_name=>l_action);
         END debug_line;
 
------------------------------------------------------------------------------------------------------------
---insert pause into script
-        PROCEDURE pause_sql(p_type NUMBER) IS
+-------------------------------------------------------------------------------------------------------
+-- insert pause into script
+PROCEDURE pause_sql(p_type NUMBER) IS
 		l_module VARCHAR2(48);
 		l_action VARCHAR2(32);
 	BEGIN
@@ -1266,9 +1265,9 @@ END gfc_ps_keydefn;
 		unset_action(p_action_name=>l_action);
         END pause_sql;
 
------------------------------------------------------------------------------------------------------------
---sql whenever error control
-        PROCEDURE whenever_sqlerror(p_type NUMBER, p_error BOOLEAN) IS
+-------------------------------------------------------------------------------------------------------
+-- sql whenever error control
+PROCEDURE whenever_sqlerror(p_type NUMBER, p_error BOOLEAN) IS
 		l_module VARCHAR2(48);
 		l_action VARCHAR2(32);
 	BEGIN
@@ -1285,9 +1284,9 @@ END gfc_ps_keydefn;
 		unset_action(p_action_name=>l_action);
         END whenever_sqlerror;
 
------------------------------------------------------------------------------------------------------------
---print generation date into build script
-        PROCEDURE signature(p_type    NUMBER
+-------------------------------------------------------------------------------------------------------
+-- print generation date into build script
+PROCEDURE signature(p_type    NUMBER
                            ,p_error BOOLEAN
                            ,p_spool   VARCHAR2 DEFAULT NULL
                            ,p_recname VARCHAR2 DEFAULT NULL) IS
@@ -1316,18 +1315,18 @@ END gfc_ps_keydefn;
             unset_action(p_action_name=>l_action);
         END signature;
 
------------------------------------------------------------------------------------------------------------
---print generation date into build script
-        PROCEDURE signoff(p_type NUMBER) IS
+-------------------------------------------------------------------------------------------------------
+-- print generation date into build script
+PROCEDURE signoff(p_type NUMBER) IS
         BEGIN
             whenever_sqlerror(p_type,FALSE);
             ins_line(p_type,'EXECUTE dbms_application_info.set_module(module_name=>''SQL*Plus'',action_name=>'''');');
             ins_line(p_type,'spool off');
         END signoff;
 
------------------------------------------------------------------------------------------------------------
---create database roles
-        PROCEDURE create_roles IS
+-------------------------------------------------------------------------------------------------------
+-- create database roles
+PROCEDURE create_roles IS
 		l_module VARCHAR2(48);
 		l_action VARCHAR2(32);
 	BEGIN
@@ -1335,8 +1334,8 @@ END gfc_ps_keydefn;
 		set_action(p_action_name=>'CREATE_ROLES');
 
                 IF l_roles = 'Y' THEN
-                        --ins_line(k_build,'set echo on pause off verify on feedback on timi on autotrace off pause off lines 100');
-                        --ins_line(k_build,LOWER('spool '||LOWER(l_scriptid)||'_'||l_dbname||'.lst'));
+                        -- ins_line(k_build,'set echo on pause off verify on feedback on timi on autotrace off pause off lines 100');
+                        -- ins_line(k_build,LOWER('spool '||LOWER(l_scriptid)||'_'||l_dbname||'.lst'));
                         signature(k_build,FALSE,l_scriptid);
                         ins_line(k_build,'');
                         ins_line(k_build,'CREATE ROLE '||LOWER(l_update_all));
@@ -1349,8 +1348,8 @@ END gfc_ps_keydefn;
 
 		unset_action(p_action_name=>l_action);
         END create_roles;
------------------------------------------------------------------------------------------------------------
---generate commands to rename table partititons
+-------------------------------------------------------------------------------------------------------
+-- generate commands to rename table partititons
 PROCEDURE rename_parts
 (p_type INTEGER DEFAULT 0
 ,p_table_name  VARCHAR2
@@ -1376,13 +1375,17 @@ PROCEDURE rename_parts
 		ORDER BY 1
                 ;
 
---drop index rather than rebuilding and renaming it somewhere else
+-- drop index rather than rebuilding and renaming it somewhere else
+-----------------------------------------------------------------------------------------------------
+-- 28.8.2013 - previously only dropped partitioned indexes, but we have global non-partitioned indexes
+--              FROM    user_ind_partitions uip, user_part_indexes upi
+--              WHERE   uip.index_name = upi.index_name
+--              AND     upi.table_name = p_table_name
+-----------------------------------------------------------------------------------------------------
                 CURSOR c_drop_idx (p_table_name VARCHAR2) IS
-                SELECT  DISTINCT 'DROP INDEX '||LOWER(uip.index_name)||';'  drop_cmd
-                FROM    user_ind_partitions uip
-                ,       user_part_indexes upi
-                WHERE   uip.index_name = upi.index_name
-                AND     upi.table_name = p_table_name
+                SELECT  DISTINCT 'DROP INDEX '||LOWER(ui.index_name)||';'  drop_cmd
+                FROM    user_indexes ui
+                WHERE   ui.table_name = p_table_name
 		ORDER BY 1
                 ;
 
@@ -1431,8 +1434,8 @@ PROCEDURE rename_parts
 		unset_action(p_action_name=>l_action);
         END rename_parts;
 
------------------------------------------------------------------------------------------------------------
---generate commands to rename table partititons
+-------------------------------------------------------------------------------------------------------
+-- generate commands to rename table partititons
 PROCEDURE rename_subparts
 (p_type INTEGER DEFAULT 0
 ,p_table_name   VARCHAR2
@@ -1461,13 +1464,18 @@ PROCEDURE rename_subparts
                 ORDER BY 1
                 ;
 
---drop index rather than rebuilding and renaming it somewhere else
+-- drop index rather than rebuilding and renaming it somewhere else
+-----------------------------------------------------------------------------------------------------
+-- 28.8.2013 - previously only dropped partitioned indexes, but we have global non-partitioned indexes
+--              FROM    user_ind_subpartitions uip, user_part_indexes upi
+--              WHERE   uip.index_name = upi.index_name
+--              AND     upi.table_name = p_table_name
+--              ORDER BY 1
+-----------------------------------------------------------------------------------------------------
                 CURSOR c_drop_idx (p_table_name VARCHAR2) IS
-                SELECT  DISTINCT 'DROP INDEX '||LOWER(uip.index_name)||';'  drop_cmd
-                FROM    user_ind_subpartitions uip
-                ,       user_part_indexes upi
-                WHERE   uip.index_name = upi.index_name
-                AND     upi.table_name = p_table_name
+                SELECT  DISTINCT 'DROP INDEX '||LOWER(ui.index_name)||';'  drop_cmd
+                FROM    user_indexes ui
+                WHERE   ui.table_name = p_table_name
                 ORDER BY 1
                 ;
 
@@ -1520,17 +1528,17 @@ PROCEDURE rename_subparts
 		unset_action(p_action_name=>l_action);
         END rename_subparts;
 
------------------------------------------------------------------------------------------------------------
---list indexed columns
-        PROCEDURE ind_cols(p_type NUMBER, p_recname VARCHAR2, p_indexid VARCHAR2, p_desc_index VARCHAR2) IS
+-------------------------------------------------------------------------------------------------------
+-- list indexed columns
+PROCEDURE ind_cols(p_type NUMBER, p_recname VARCHAR2, p_indexid VARCHAR2, p_desc_index VARCHAR2) IS
                 CURSOR c_ind_cols(p_recname VARCHAR2, p_indexid VARCHAR2) IS
-                SELECT  NVL(LOWER(c.fieldname),k.fieldname) fieldname --6.9.2007 only lower case of columns
---indexes not built descending in PT8.15
+                SELECT  NVL(LOWER(c.fieldname),k.fieldname) fieldname -- 6.9.2007 only lower case of columns
+-- indexes not built descending in PT8.15
 --              ||      DECODE(k.ascdesc,0,' DESC')
                 ,       k.ascdesc
 		,	t.part_column, t.subpart_column
                 FROM    gfc_ps_keydefn k
-			LEFT OUTER JOIN gfc_ps_tab_columns c --6.9.2007 to determine fields not expressions
+			LEFT OUTER JOIN gfc_ps_tab_columns c -- 6.9.2007 to determine fields not expressions
 			ON c.recname = k.recname
 			AND c.fieldname = k.fieldname
 			LEFT OUTER JOIN gfc_part_tables t
@@ -1574,8 +1582,8 @@ PROCEDURE rename_subparts
 		unset_action(p_action_name=>l_action);
         END ind_cols;
 
------------------------------------------------------------------------------------------------------------
---list columns in table for column list in create table DDL
+-------------------------------------------------------------------------------------------------------
+-- list columns in table for column list in create table DDL
 PROCEDURE tab_cols
 (p_type         INTEGER
 ,p_recname      VARCHAR2
@@ -1617,7 +1625,7 @@ BEGIN
     ins_line(p_type,l_col_def);
   END LOOP;
 
-  IF p_organisation = 'I' THEN --25.5.2011 add pk to col list if iot
+  IF p_organisation = 'I' THEN -- 25.5.2011 add pk to col list if iot
    ins_line(p_type,',CONSTRAINT '||LOWER(p_prefix||p_recname)||' PRIMARY KEY ');
    ind_cols(p_type,p_recname,'_','N');
   END IF;
@@ -1628,13 +1636,13 @@ BEGIN
   unset_action(p_action_name=>l_action);
 END tab_cols;
 
------------------------------------------------------------------------------------------------------------
---list columns in table for column list in create table DDL
-        PROCEDURE tab_col_list(p_type        INTEGER
+-------------------------------------------------------------------------------------------------------
+-- list columns in table for column list in create table DDL
+PROCEDURE tab_col_list(p_type        INTEGER
                               ,p_recname     VARCHAR2
 	                      ,p_table_name  VARCHAR2 DEFAULT NULL
 	                      ,p_column_name BOOLEAN DEFAULT TRUE) IS
-                --cursor lists columns in record, returns column name on specified table (or matching record if not specified) 
+                -- cursor lists columns in record, returns column name on specified table (or matching record if not specified) 
                 CURSOR c_tab_cols(p_recname VARCHAR2) IS
                 SELECT  g.*, c.column_name
                 FROM    (
@@ -1681,9 +1689,9 @@ END tab_cols;
                                 l_col_def := l_col_def||',';
                         END IF;
 			
-			IF p_column_name OR p_tab_cols.column_name IS NOT NULL THEN --22.1.2007 - to handle new columns not in table
+			IF p_column_name OR p_tab_cols.column_name IS NOT NULL THEN -- 22.1.2007 - to handle new columns not in table
 	                        l_col_def := l_col_def||LOWER(p_tab_cols.fieldname);
-			ELSIF p_tab_cols.subrecname = 'PSARCHIVE_SBR' THEN --special processing for PS archive tables
+			ELSIF p_tab_cols.subrecname = 'PSARCHIVE_SBR' THEN -- special processing for PS archive tables
 				IF p_tab_cols.fieldtype IN(0) THEN -- character
 					l_col_def := l_col_def||'''&'||'&'||p_tab_cols.fieldname||'''';
 				ELSE
@@ -1693,19 +1701,19 @@ END tab_cols;
 				l_col_def := l_col_def||''' ''';
 			ELSIF p_tab_cols.fieldtype IN(2,3) THEN -- numeric
 				l_col_def := l_col_def||'0';
-			ELSIF p_tab_cols.fieldtype IN(4,5,6) THEN --date
-				IF mod(FLOOR(p_tab_cols.useedit/256),2) = 1 THEN --required
+			ELSIF p_tab_cols.fieldtype IN(4,5,6) THEN -- date
+				IF mod(FLOOR(p_tab_cols.useedit/256),2) = 1 THEN -- required
 					l_col_def := l_col_def||'SYSDATE';
 				ELSE
 					l_col_def := l_col_def||'NULL';
 				END IF;
 			ELSIF p_tab_cols.fieldtype IN(1,8,9) THEN -- long
-				IF mod(FLOOR(p_tab_cols.useedit/256),2) = 1 THEN --required
+				IF mod(FLOOR(p_tab_cols.useedit/256),2) = 1 THEN -- required
 					l_col_def := l_col_def||''' ''';
 				ELSE
 					l_col_def := l_col_def||'NULL';
 				END IF;
-			END IF; --22.1.2007 - end of new column handling 
+			END IF; -- 22.1.2007 - end of new column handling 
 
                         IF LENGTH(l_col_def) >= 950 THEN
                                 ins_line(p_type,l_col_def);
@@ -1721,7 +1729,7 @@ END tab_cols;
 		unset_action(p_action_name=>l_action);
         END;
 
---6.9.2007 substituate table storage variables in same way as Peoplesoft
+-- 6.9.2007 substituate table storage variables in same way as Peoplesoft
 	FUNCTION tab_storage(p_recname VARCHAR2, p_storage VARCHAR2) RETURN VARCHAR2 IS
 		l_storage VARCHAR2(1000 CHAR);
 		l_module VARCHAR2(48);
@@ -1741,12 +1749,12 @@ END tab_cols;
 		, 	DECODE(NVL(r.parmvalue,' '),' ',d.parmvalue,r.parmvalue) parmvalue
 		FROM	psddldefparms d
 		,	psrecddlparm r
-		WHERE	d.statement_type = 1 /*create table*/
-		AND	d.platformid = 2 /*oracle*/
-		AND	d.sizing_set = 0 /*just because*/
+		WHERE	d.statement_type = 1 -- create table
+		AND	d.platformid = 2 --oracle
+		AND	d.sizing_set = 0 --just because
 		AND	r.recname(+) = p_recname
 		AND	r.platformid(+) = d.platformid
-		AND	r.sizingset(+) = d.sizing_set /*yes, sizingset without an underscore - psft got it wrong*/
+		AND	r.sizingset(+) = d.sizing_set -- yes, sizingset without an underscore - psft got it wrong
 		AND	r.parmname(+) = d.parmname
                 AND     l_storage LIKE '%**'||d.parmname||'**%'
                 ) LOOP
@@ -1757,7 +1765,7 @@ END tab_cols;
 		RETURN l_storage;
 	END tab_storage;
 
---6.9.2007 new:substituate index storage variables in same way as Peoplesoft
+-- 6.9.2007 new:substituate index storage variables in same way as Peoplesoft
 	FUNCTION idx_storage(p_recname VARCHAR2, p_indexid VARCHAR2, p_storage VARCHAR2, 
                              p_subpartitions NUMBER DEFAULT 0) RETURN VARCHAR2 IS
 		l_storage VARCHAR2(1000 CHAR);
@@ -1784,20 +1792,20 @@ END tab_cols;
 				ON	i.recname = p_recname
 				AND	i.indexid = p_indexid
 				AND	i.platformid = d.platformid
-				AND	i.sizingset = d.sizing_set /*yes, sizingset without an underscore - psft got it wrong*/
+				AND	i.sizingset = d.sizing_set -- yes, sizingset without an underscore - psft got it wrong
 				AND	i.parmname = d.parmname
 			LEFT OUTER JOIN	gfc_ps_idxddlparm g
 				ON	g.recname = p_recname
 				AND	g.indexid = p_indexid
 				AND	g.parmname = d.parmname
-		WHERE	d.statement_type = 2 /*create index*/
-		AND	d.platformid = 2 /*oracle*/
-		AND	d.sizing_set = 0 /*just because*/
+		WHERE	d.statement_type = 2 -- create index
+		AND	d.platformid = 2 --oracle
+		AND	d.sizing_set = 0 --just because
                 AND     l_storage LIKE '%**'||d.parmname||'**%'
                 ) LOOP
 			l_storage := replace(l_storage,c_idx_storage.parmname,c_idx_storage.parmvalue);
-			if p_subpartitions > 1 AND l_oraver < 10 THEN /*can't compress composite partitions*/
-				l_storage := replace(l_storage,' COMPRESS',' --COMPRESS');
+			if p_subpartitions > 1 AND l_oraver < 10 THEN -- cannot compress composite partitions
+				l_storage := replace(l_storage,' COMPRESS',' -- cOMPRESS');
 			END IF;
 		END LOOP;
 
@@ -1805,12 +1813,12 @@ END tab_cols;
 		RETURN l_storage;
 	END idx_storage;
 
------------------------------------------------------------------------------------------------------------
---generate partition clause on the basis of part ranges table
-        PROCEDURE tab_listparts(p_type NUMBER, p_recname VARCHAR2
+-------------------------------------------------------------------------------------------------------
+-- generate partition clause on the basis of part ranges table
+PROCEDURE tab_listparts(p_type NUMBER, p_recname VARCHAR2
                                ,p_part_id VARCHAR2, p_part_name VARCHAR2
                                ,p_part_basename VARCHAR2
-                               ,p_arch_flag VARCHAR2 DEFAULT 'N') IS --19.3.2010 added subpart
+                               ,p_arch_flag VARCHAR2 DEFAULT 'N') IS -- 19.3.2010 added subpart
             l_part_def VARCHAR2(400 CHAR);
             l_counter INTEGER := 0;
             l_module VARCHAR2(48);
@@ -1826,7 +1834,7 @@ END tab_cols;
                                  ||'/arch_flag='||p_arch_flag
                                  ,6);
 
-            --12.2.2008 restrict combinations of partitions
+            -- 12.2.2008 restrict combinations of partitions
             FOR t IN(
                 SELECT a.*
                 FROM   gfc_part_lists a, gfc_part_range_lists b
@@ -1834,7 +1842,7 @@ END tab_cols;
                 AND    b.part_id = p_part_id
                 AND    b.range_name = p_part_name
                 AND    b.list_name = a.part_name
-                AND    b.build = 'Y' --if subpartition to be built in range partition
+                AND    b.build = 'Y' -- if subpartition to be built in range partition
                 AND    (a.arch_flag = p_arch_flag OR p_arch_flag IS NULL)
                 ORDER BY a.part_name
             ) LOOP
@@ -1855,9 +1863,9 @@ END tab_cols;
                     l_part_def := ' TABLESPACE '||t.tab_tablespace;
                 END IF;
 
---3.7.2012 remove physical storage parameters from subpartition definition including Oracle 11.2
+-- 3.7.2012 remove physical storage parameters from subpartition definition including Oracle 11.2
 --              IF t.tab_storage IS NOT NULL AND l_oraver >= 11.2 THEN
---                  l_part_def := l_part_def||' '||tab_storage(p_recname, t.tab_storage); --6.9.2007
+--                  l_part_def := l_part_def||' '||tab_storage(p_recname, t.tab_storage); -- 6.9.2007
 --              END IF;
 
                 IF l_part_def IS NOT NULL THEN
@@ -1873,9 +1881,9 @@ END tab_cols;
             unset_action(p_action_name=>l_action);
         END tab_listparts;
 
------------------------------------------------------------------------------------------------------------
---generate partition clause on the basis of part ranges table
-        PROCEDURE idx_listparts(p_type NUMBER, p_recname VARCHAR2, p_indexid VARCHAR2, 
+-------------------------------------------------------------------------------------------------------
+-- generate partition clause on the basis of part ranges table
+PROCEDURE idx_listparts(p_type NUMBER, p_recname VARCHAR2, p_indexid VARCHAR2, 
                                 p_part_id VARCHAR2, p_part_name VARCHAR2) IS
             l_part_def VARCHAR2(400 CHAR);
             l_counter INTEGER := 0;
@@ -1887,7 +1895,7 @@ END tab_cols;
 
             debug_msg('idx_listparts:'||p_recname||'/'||p_indexid||'/'||p_part_id,6);
 
-            --12.2.2008 restrict combinations of partitions
+            -- 12.2.2008 restrict combinations of partitions
             FOR t IN(
                         SELECT  a.*
                         FROM    gfc_part_lists a, gfc_part_range_lists b
@@ -1895,7 +1903,7 @@ END tab_cols;
                         AND     b.part_id = p_part_id
                         AND     b.range_name = p_part_name
                         AND     b.list_name = a.part_name
-                        AND     b.build = 'Y' --if subpartition to be built in range partition
+                        AND     b.build = 'Y' -- if subpartition to be built in range partition
                         ORDER BY a.part_name
             ) LOOP
                 IF l_counter = 0 THEN
@@ -1911,7 +1919,7 @@ END tab_cols;
                 IF t.tab_tablespace IS NOT NULL THEN
                     l_part_def := l_part_def||' TABLESPACE '||t.idx_tablespace;
                 END IF;
---3.7.2012 remove physical storage option from subpartition create clause including Oracle 11.2
+-- 3.7.2012 remove physical storage option from subpartition create clause including Oracle 11.2
 --              IF t.idx_storage IS NOT NULL AND l_oraver >= 11.2 THEN
 --                  l_part_def := l_part_def||' '||
 --                                idx_storage(p_recname, p_indexid, t.idx_storage);
@@ -1929,9 +1937,9 @@ END tab_cols;
             unset_action(p_action_name=>l_action);
         END idx_listparts;
 
------------------------------------------------------------------------------------------------------------
---generate partition clause on the basis of part ranges table
-        PROCEDURE tab_part_ranges(p_type NUMBER, p_recname VARCHAR2, p_part_id VARCHAR2, 
+-------------------------------------------------------------------------------------------------------
+-- generate partition clause on the basis of part ranges table
+PROCEDURE tab_part_ranges(p_type NUMBER, p_recname VARCHAR2, p_part_id VARCHAR2, 
 		                  p_subpart_type VARCHAR2, p_subpartitions INTEGER,
 			          p_arch_flag VARCHAR2 DEFAULT 'N', 
                                   p_owner VARCHAR2, p_table_name VARCHAR2,
@@ -1986,7 +1994,7 @@ END tab_cols;
                                 l_part_def := l_part_def||' TABLESPACE '||p_tab_part_ranges.tab_tablespace;
                         END IF;
                         IF p_tab_part_ranges.tab_storage IS NOT NULL THEN
-                                l_part_def := l_part_def||' '||tab_storage(p_recname, p_tab_part_ranges.tab_storage); --6.9.2007
+                                l_part_def := l_part_def||' '||tab_storage(p_recname, p_tab_part_ranges.tab_storage); -- 6.9.2007
                         END IF;
 			IF LENGTH(l_part_def) > 0 THEN
 	                        ins_line(p_type,l_part_def);
@@ -2021,9 +2029,9 @@ END tab_cols;
 		unset_action(p_action_name=>l_action);
         END tab_part_ranges;
 
------------------------------------------------------------------------------------------------------------
---generate partition clause on the basis of part ranges table
-        PROCEDURE tab_part_lists(p_type NUMBER, p_recname VARCHAR2, p_part_id VARCHAR2, 
+-------------------------------------------------------------------------------------------------------
+-- generate partition clause on the basis of part ranges table
+PROCEDURE tab_part_lists(p_type NUMBER, p_recname VARCHAR2, p_part_id VARCHAR2, 
 		            p_subpart_type VARCHAR2, p_subpartitions INTEGER, p_arch_flag VARCHAR2 DEFAULT 'N') IS
                 CURSOR c_tab_part_lists(p_recname VARCHAR2) IS
                 SELECT *
@@ -2069,7 +2077,7 @@ END tab_cols;
                                 l_part_def := l_part_def||' TABLESPACE '||p_tab_part_lists.tab_tablespace;
                         END IF;
                         IF p_tab_part_lists.tab_storage IS NOT NULL THEN
-                                l_part_def := l_part_def||' '||tab_storage(p_recname, p_tab_part_lists.tab_storage); --6.9.2007
+                                l_part_def := l_part_def||' '||tab_storage(p_recname, p_tab_part_lists.tab_storage); -- 6.9.2007
                         END IF;
 			IF LENGTH(l_part_def) > 0 THEN
 	                        ins_line(p_type,l_part_def);
@@ -2097,9 +2105,9 @@ END tab_cols;
 		unset_action(p_action_name=>l_action);
         END tab_part_lists;
 
------------------------------------------------------------------------------------------------------------
---generate partition clause on the basis of part ranges table
-        PROCEDURE ind_hashparts(p_type      NUMBER
+-------------------------------------------------------------------------------------------------------
+-- generate partition clause on the basis of part ranges table
+PROCEDURE ind_hashparts(p_type      NUMBER
 	                       ,p_recname   VARCHAR2
 	                       ,p_indexid   VARCHAR2 DEFAULT '_'
 	                       ,p_num_parts INTEGER) IS
@@ -2128,8 +2136,8 @@ END tab_cols;
 		unset_action(p_action_name=>l_action);
         END ind_hashparts;
 
------------------------------------------------------------------------------------------------------------
-        PROCEDURE tab_hashparts(p_type      NUMBER
+-------------------------------------------------------------------------------------------------------
+PROCEDURE tab_hashparts(p_type      NUMBER
 	                       ,p_recname   VARCHAR2
 	                       ,p_num_parts INTEGER) IS
                 l_part_def VARCHAR2(200 CHAR);
@@ -2139,9 +2147,9 @@ END tab_cols;
 		ind_hashparts(p_type, p_recname, '_', p_num_parts);
         END tab_hashparts;
 
------------------------------------------------------------------------------------------------------------
---generate partition clause on the basis of part ranges table
-        PROCEDURE ind_listparts(p_type NUMBER, p_recname VARCHAR2, p_indexid VARCHAR2, 
+-------------------------------------------------------------------------------------------------------
+-- generate partition clause on the basis of part ranges table
+PROCEDURE ind_listparts(p_type NUMBER, p_recname VARCHAR2, p_indexid VARCHAR2, 
                                 p_part_id VARCHAR2, p_part_name VARCHAR2,
                                 p_arch_flag VARCHAR2 DEFAULT ''
                                ) IS
@@ -2167,7 +2175,7 @@ END tab_cols;
 			AND     b.part_id = p_part_id
 			AND	b.range_name = p_part_name
 			AND     b.list_name = a.part_name
-			AND     b.build = 'Y' --if subpartition to be built in range partition
+			AND     b.build = 'Y' -- if subpartition to be built in range partition
                   AND    (a.arch_flag = p_arch_flag OR p_arch_flag IS NULL)
 			ORDER BY a.part_name
 		) LOOP
@@ -2181,7 +2189,7 @@ END tab_cols;
                         IF t.tab_tablespace IS NOT NULL THEN
                                 l_part_def := l_part_def||' TABLESPACE '||t.idx_tablespace;
                         END IF;
---27.11.2012 suppressed because causes ORA-14189: this physical attribute may not be specified for an index subpartition
+-- 27.11.2012 suppressed because causes ORA-14189: this physical attribute may not be specified for an index subpartition
 --                      IF t.tab_storage IS NOT NULL THEN
 --                              l_part_def := l_part_def||' '||idx_storage(p_recname, p_indexid, t.idx_storage);
 --                      END IF;
@@ -2195,9 +2203,9 @@ END tab_cols;
 		unset_action(p_action_name=>l_action);
         END ind_listparts;
 
------------------------------------------------------------------------------------------------------------
---generate partition clause for create index DDL
-        PROCEDURE ind_part_ranges(p_type NUMBER, p_recname VARCHAR2, p_indexid VARCHAR2, 
+-------------------------------------------------------------------------------------------------------
+-- generate partition clause for create index DDL
+PROCEDURE ind_part_ranges(p_type NUMBER, p_recname VARCHAR2, p_indexid VARCHAR2, 
                             p_part_id VARCHAR2, p_subpart_type VARCHAR2, p_subpartitions NUMBER,
                             p_arch_flag VARCHAR2 DEFAULT 'N', 
                             p_owner VARCHAR2, 
@@ -2239,10 +2247,10 @@ END tab_cols;
                                 l_part_def := l_part_def ||' '||
                                       idx_storage(p_recname, p_indexid, 
                                                   p_ind_part_ranges.idx_storage,
-                                                  p_subpartitions); --6.9.2007
+                                                  p_subpartitions); -- 6.9.2007
                         END IF;
                         ins_line(p_type,l_part_def);
-                        --explicity define subpartitions
+                        -- explicity define subpartitions
                         IF p_subpart_type = 'H' AND p_subpartitions > 1 THEN
                                 FOR l_subpartition IN 1..p_subpartitions LOOP
                                         IF l_subpartition = 1 THEN
@@ -2269,9 +2277,9 @@ END tab_cols;
 		unset_action(p_action_name=>l_action);
         END ind_part_ranges;
 
------------------------------------------------------------------------------------------------------------
---generate partition clause for create index DDL
-        PROCEDURE ind_part_lists(p_type NUMBER, p_recname VARCHAR2, p_indexid VARCHAR2, 
+-------------------------------------------------------------------------------------------------------
+-- generate partition clause for create index DDL
+PROCEDURE ind_part_lists(p_type NUMBER, p_recname VARCHAR2, p_indexid VARCHAR2, 
                             p_part_id VARCHAR2, p_subpart_type VARCHAR2, p_subpartitions NUMBER) IS
                 CURSOR c_ind_part_lists IS
                 SELECT *
@@ -2301,10 +2309,10 @@ END tab_cols;
                         IF p_ind_part_lists.idx_storage IS NOT NULL THEN
                                 l_part_def := l_part_def ||' '||
                                       idx_storage(p_recname, p_indexid, p_ind_part_lists.idx_storage,
-                                                  p_subpartitions); --6.9.2007
+                                                  p_subpartitions); -- 6.9.2007
                         END IF;
                         ins_line(p_type,l_part_def);
-                        --explicity define subpartitions
+                        -- explicity define subpartitions
                         IF p_subpart_type = 'H' AND p_subpartitions > 1 THEN
                         FOR l_subpartition IN 1..p_subpartitions LOOP
                                 IF l_subpartition = 1 THEN
@@ -2329,8 +2337,8 @@ END tab_cols;
 		unset_action(p_action_name=>l_action);
         END ind_part_lists;
 
------------------------------------------------------------------------------------------------------------
---enable/disable DDL trigger, added 10.10.2007
+-------------------------------------------------------------------------------------------------------
+-- enable/disable DDL trigger, added 10.10.2007
 	PROCEDURE ddlpermit(p_type NUMBER, p_ddlpermit BOOLEAN) IS
 		l_module VARCHAR2(48);
 		l_action VARCHAR2(32);
@@ -2338,7 +2346,7 @@ END tab_cols;
 		dbms_application_info.read_module(module_name=>l_module, action_name=>l_action);
 		set_action(p_action_name=>'DDLTRIGGER');
 
-		--5.2.2013 replace trigger name with commands
+		-- 5.2.2013 replace trigger name with commands
 		IF p_ddlpermit THEN
 			IF l_ddlenable IS NOT NULL THEN
 				ins_line(p_type,l_ddlenable);
@@ -2364,16 +2372,16 @@ END tab_cols;
 		unset_action(p_action_name=>l_action);
 	END ddlpermit;
 
------------------------------------------------------------------------------------------------------------
---generate partition clause for global index
+-------------------------------------------------------------------------------------------------------
+-- generate partition clause for global index
 --only build partitions not set to (D)rop or (A)rchive
-        PROCEDURE glob_ind_parts(p_type INTEGER, p_recname VARCHAR2, p_indexid VARCHAR2, p_part_id VARCHAR2, 
+PROCEDURE glob_ind_parts(p_type INTEGER, p_recname VARCHAR2, p_indexid VARCHAR2, p_part_id VARCHAR2, 
 		            p_part_type VARCHAR2, p_subpart_type VARCHAR2, p_subpartitions INTEGER) IS
                 CURSOR c_idx_parts (p_recname VARCHAR2) IS
                 SELECT *
                 FROM gfc_part_ranges r
                 WHERE r.part_id = p_part_id
- 		AND r.arch_flag = 'N' --27.03.2013 only build partitions in global part indexes not marked for delete or archive
+ 		AND r.arch_flag = 'N' -- 27.03.2013 only build partitions in global part indexes not marked for delete or archive
                 ORDER BY part_no, part_name;
 
                 p_idx_parts c_idx_parts%ROWTYPE;
@@ -2402,7 +2410,7 @@ END tab_cols;
                         l_part_def := l_part_def||'PARTITION '||LOWER(p_recname||p_indexid||p_idx_parts.part_name);
 			IF p_part_type = 'R' THEN
 				l_part_def := l_part_def||' VALUES LESS THAN ('||p_idx_parts.part_value||')';
-			ELSIF p_part_type = 'L' THEN /*List*/
+			ELSIF p_part_type = 'L' THEN -- list
 				l_part_def := l_part_def||' VALUES ('||p_idx_parts.part_value||')';
 			END IF;
                         IF p_idx_parts.idx_tablespace IS NOT NULL THEN
@@ -2411,7 +2419,7 @@ END tab_cols;
                         IF p_idx_parts.idx_storage IS NOT NULL THEN
                                 l_part_def := l_part_def||' '||idx_storage(p_recname, p_indexid, 
 				                                           p_idx_parts.idx_storage,
-				                                           p_subpartitions); --6.9.2007
+				                                           p_subpartitions); -- 6.9.2007
                         END IF;
                         ins_line(p_type,l_part_def);
                         IF p_subpart_type = 'H' AND p_subpartitions > 1 THEN
@@ -2439,10 +2447,10 @@ END tab_cols;
 		unset_action(p_action_name=>l_action);
         END glob_ind_parts;
 
------------------------------------------------------------------------------------------------------------
---generate all partitioned indexes defined on record
---wibble don't build archive partition
-        PROCEDURE mk_part_indexes(p_recname    VARCHAR2
+-------------------------------------------------------------------------------------------------------
+-- generate all partitioned indexes defined on record
+-- wibble do not  build archive partition
+PROCEDURE mk_part_indexes(p_recname    VARCHAR2
                                  ,p_table_name VARCHAR2
                                  ,p_schema     VARCHAR2
                                  ,p_arch_flag  VARCHAR2 
@@ -2459,12 +2467,12 @@ END tab_cols;
 
 		debug_msg('mk_part_indexes:'||p_recname||'/'||p_schema||'.'||p_table_name||'/arch_flag='||p_arch_flag,6);
 
-                --ins_line(k_index,'set echo on pause off verify on feedback on timi on autotrace off pause off lines 100');
-                --ins_line(k_index,LOWER('spool gfcindex_'||l_dbname||'_'||p_recname||'.lst'));
+                -- ins_line(k_index,'set echo on pause off verify on feedback on timi on autotrace off pause off lines 100');
+                -- ins_line(k_index,LOWER('spool gfcindex_'||l_dbname||'_'||p_recname||'.lst'));
                 signature(k_index,FALSE,'gfcindex',p_recname);
                 whenever_sqlerror(k_index,TRUE);
-		ddlpermit(k_index,TRUE); --added 10.10.2007
---25.5.2011 do not build unique index on IOT
+		ddlpermit(k_index,TRUE); -- added 10.10.2007
+-- 25.5.2011 do not build unique index on IOT
                 FOR p_indexes IN(
                 	SELECT   g.indexid, g.uniqueflag, g.platform_ora
 	                ,        p.RECNAME
@@ -2477,12 +2485,12 @@ END tab_cols;
 			, 	 NVL(i.idx_tablespace,p.idx_tablespace) idx_tablespace
 	                ,        NVL(i.idx_storage,p.idx_storage) idx_storage
 	                ,        NVL(i.override_schema,p.override_schema) override_schema
-			,        CASE WHEN p.part_type = 'N' THEN 'G' --added 9.11.2011 to support partitioned indexes on non-partitioned tables
+			,        CASE WHEN p.part_type = 'N' THEN 'G' -- added 9.11.2011 to support partitioned indexes on non-partitioned tables
                                       WHEN i.indexid IS NULL OR i.part_type = 'L' THEN 'L'
  			              ELSE 'G'
 			         END AS ind_part_type
 			,        i.name_suffix
-        	        FROM     gfc_ps_indexdefn g --6.9.2007 removed psindexdefn
+        	        FROM     gfc_ps_indexdefn g -- 6.9.2007 removed psindexdefn
 			         LEFT OUTER JOIN gfc_part_indexes i
 			         ON i.recname = g.recname
 			         AND i.indexid = g.indexid
@@ -2510,7 +2518,7 @@ END tab_cols;
 			END IF;
 
                	        whenever_sqlerror(k_index,TRUE);
-                        FOR l_type IN 0..1 LOOP --do the index create twice
+                        FOR l_type IN 0..1 LOOP -- do the index create twice
 				IF l_type = 0 THEN
 					l_ind_prefix := 'gfc';
 				ELSE
@@ -2525,7 +2533,7 @@ END tab_cols;
                                         ' ON '||LOWER(l_schema||l_ind_prefix||'_'||p_recname);
                                 ins_line(l_type,l_ind_def);
        	                        ind_cols(l_type,p_recname,p_indexes.indexid,l_desc_index);
-				IF p_indexes.ind_part_type = 'L' THEN --local partitioning
+				IF p_indexes.ind_part_type = 'L' THEN -- local partitioning
                         	        ins_line(l_type,'LOCAL');
 					IF p_indexes.part_type = 'L' THEN
         	                        	ind_part_lists(p_type=>l_type,
@@ -2555,7 +2563,7 @@ END tab_cols;
 					IF p_indexes.part_type = 'R' THEN
        				                ins_line(l_type,'GLOBAL PARTITION BY RANGE ('
    						        ||p_indexes.part_column||')');
-					ELSE /*List-although oracle doesn't support this yet!*/
+					ELSE -- list-although oracle doesn't support this yet!
        				                ins_line(l_type,'GLOBAL PARTITION BY LIST('
 						        ||p_indexes.part_column||')');
 					END IF;
@@ -2580,23 +2588,23 @@ END tab_cols;
 					             ,p_num_parts=>p_indexes.hash_partitions);
 
 				END IF;
-				--index level storage clause
+				-- index level storage clause
                                 IF p_indexes.idx_tablespace IS NOT NULL THEN
 	                                ins_line(l_type,'TABLESPACE '||p_indexes.idx_tablespace);
        		                END IF;
                       	        IF p_indexes.idx_storage IS NOT NULL THEN
                         	        ins_line(l_type,idx_storage(p_recname, p_indexes.indexid, 
-					           p_indexes.idx_storage, p_indexes.hash_partitions)); --6.9.2007
+					           p_indexes.idx_storage, p_indexes.hash_partitions)); -- 6.9.2007
                                 END IF;
 
-                                --9.10.2003 - create index parallel
+                                -- 9.10.2003 - create index parallel
        	                        IF l_parallel_index = 'Y' THEN
                	                        ins_line(l_type,'PARALLEL');
 				ELSE
 					ins_line(l_type,'NOPARALLEL');
                                 END IF;
 
-       	                        --9.10.2003 - create index nologging, then change it to logged noparallel
+       	                        -- 9.10.2003 - create index nologging, then change it to logged noparallel
                	                IF l_logging = 'N' THEN
                        	                ins_line(l_type,'NOLOGGING');
                                	END IF;
@@ -2623,7 +2631,7 @@ END tab_cols;
                         IF l_drop_index = 'Y' THEN
                                 ins_line(k_build,l_noalterprefix||'DROP INDEX '
 				          ||LOWER(l_schema||'ps'||p_indexes.indexid||p_recname
-                                          ||p_indexes.name_suffix)); --6.9.2007
+                                          ||p_indexes.name_suffix)); -- 6.9.2007
        			ELSE
                                 ins_line(k_build,'ALTER INDEX '||LOWER(l_schema||'ps'||p_indexes.indexid||p_recname)
                                           ||' RENAME TO old'||LOWER(p_indexes.indexid||p_recname
@@ -2631,12 +2639,12 @@ END tab_cols;
                         END IF;
 			ins_line(k_build,'/');
        			whenever_sqlerror(k_build,TRUE);
-                        ins_line(k_build,l_noalterprefix||'ALTER INDEX ' --6.9.2007 
+                        ins_line(k_build,l_noalterprefix||'ALTER INDEX ' -- 6.9.2007 
 	                         ||LOWER(l_schema||'gfc'||p_indexes.indexid||p_recname||p_indexes.name_suffix)
 	                         ||' RENAME TO ps'||LOWER(p_indexes.indexid||p_recname||p_indexes.name_suffix)); 
 			ins_line(k_build,'/');
                         ins_line(k_build,'');
---30.6.2005-bugfix-don't drop anything after index only build
+-- 30.6.2005-bugfix-do not  drop anything after index only build
 --                      IF l_drop_index = 'Y' THEN
 --                            	whenever_sqlerror(k_index,FALSE);
 --                              ins_line(k_index,'DROP INDEX '||LOWER(l_schema||'ps'||p_indexes.indexid||p_recname
@@ -2651,15 +2659,15 @@ END tab_cols;
 --	   		                         ||' RENAME TO ps'||LOWER(p_indexes.indexid||p_recname||p_indexes.name_suffix)||';');
                         ins_line(k_index,'');
                 END LOOP;
-		ddlpermit(k_index,FALSE); --added 10.10.2007
+		ddlpermit(k_index,FALSE); -- added 10.10.2007
                 ins_line(k_index,'spool off');
 
 		unset_action(p_action_name=>l_action);
         END mk_part_indexes;
 
------------------------------------------------------------------------------------------------------------
---generate all partitioned indexes defined on record
-        PROCEDURE mk_arch_indexes(p_type       NUMBER
+-------------------------------------------------------------------------------------------------------
+-- generate all partitioned indexes defined on record
+PROCEDURE mk_arch_indexes(p_type       NUMBER
 				 ,p_recname    VARCHAR2
                                  ,p_schema     VARCHAR2
                                  ,p_table_name VARCHAR2
@@ -2682,8 +2690,8 @@ END tab_cols;
 
 		l_schema := LOWER(p_schema||'.');
 
---25.5.2011 do not build unique index on IOT
---25.5.2012 added NOT to unique IOT index logic
+-- 25.5.2011 do not build unique index on IOT
+-- 25.5.2012 added NOT to unique IOT index logic
                 FOR p_indexes IN(
                 	SELECT   g.indexid, g.uniqueflag, g.platform_ora
 	                ,        p.RECNAME
@@ -2700,7 +2708,7 @@ END tab_cols;
  			              ELSE 'G'
 			         END AS ind_part_type
 			,        i.name_suffix
-        	        FROM     gfc_ps_indexdefn g --6.9.2007 removed psindexdefn
+        	        FROM     gfc_ps_indexdefn g -- 6.9.2007 removed psindexdefn
 			         LEFT OUTER JOIN gfc_part_indexes i
 			         ON i.recname = g.recname
 			         AND i.indexid = g.indexid
@@ -2731,8 +2739,8 @@ END tab_cols;
                         	ins_line(p_type,l_ind_def);
 	                        ind_cols(p_type,p_recname,p_indexes.indexid,l_desc_index);
 				IF p_part_name IS NULL THEN
-					NULL; --do not partition the index
-				ELSIF p_indexes.ind_part_type = 'L' THEN  --local partitioning
+					NULL; -- do not partition the index
+				ELSIF p_indexes.ind_part_type = 'L' THEN  -- local partitioning
 	                       	        ins_line(p_type,'LOCAL');
 					IF p_indexes.part_type = 'L' THEN
                 	                	ind_part_lists(p_type=>p_type,
@@ -2761,7 +2769,7 @@ END tab_cols;
 					IF p_indexes.part_type = 'R' THEN
       					                ins_line(p_type,'GLOBAL PARTITION BY RANGE ('
   							        ||p_indexes.part_column||')');
-					ELSE /*List-although oracle doesn't support this yet!*/
+					ELSE -- list-although oracle doesn't support this yet!
 	     				                ins_line(p_type,'GLOBAL PARTITION BY LIST('
 					        ||p_indexes.part_column||')');
 					END IF;
@@ -2786,23 +2794,23 @@ END tab_cols;
 					             ,p_num_parts=>p_indexes.hash_partitions);
 				END IF;
 	
-				--index level storage clause
+				-- index level storage clause
                 	        IF p_indexes.idx_tablespace IS NOT NULL THEN
                         	       ins_line(p_type,'TABLESPACE '||p_indexes.idx_tablespace);
 		                END IF;
         	       	        IF p_indexes.idx_storage IS NOT NULL THEN
                 	       	        ins_line(p_type,idx_storage(p_recname, p_indexes.indexid, 
-					           p_indexes.idx_storage, p_indexes.hash_partitions)); --6.9.2007
+					           p_indexes.idx_storage, p_indexes.hash_partitions)); -- 6.9.2007
 	                        END IF;
 
-	                        --9.10.2003 - create index parallel
+	                        -- 9.10.2003 - create index parallel
        		                IF l_parallel_index = 'Y' THEN
                 	                ins_line(p_type,'PARALLEL');
 				ELSE
 					ins_line(p_type,'NOPARALLEL');
 	                        END IF;
 
-	                        --9.10.2003 - create index nologging, then change it to logged noparallel
+	                        -- 9.10.2003 - create index nologging, then change it to logged noparallel
        		                IF l_logging = 'N' THEN
                		                ins_line(p_type,'NOLOGGING');
                        		END IF;
@@ -2830,14 +2838,14 @@ END tab_cols;
 		unset_action(p_action_name=>l_action);
         END mk_arch_indexes;
 
------------------------------------------------------------------------------------------------------------
---generate all GLOBAL TEMPORARY indexes defined on record
-        PROCEDURE mk_gt_indexes (p_recname VARCHAR2, p_table_name VARCHAR2, p_suffix VARCHAR2) IS
+-------------------------------------------------------------------------------------------------------
+-- generate all GLOBAL TEMPORARY indexes defined on record
+PROCEDURE mk_gt_indexes (p_recname VARCHAR2, p_table_name VARCHAR2, p_suffix VARCHAR2) IS
                 CURSOR c_indexes (p_recname VARCHAR2) IS
                 SELECT  g.indexid, g.uniqueflag, g.name_suffix
-                FROM    gfc_ps_indexdefn g --6.9.2007 removed psindexdefn
+                FROM    gfc_ps_indexdefn g -- 6.9.2007 removed psindexdefn
                 WHERE   g.recname = p_recname
-		AND     g.platform_ora = 1 --20.2.2008 added
+		AND     g.platform_ora = 1 -- 20.2.2008 added
                 ;
                 p_indexes c_indexes%ROWTYPE;
                 l_ind_def VARCHAR2(100 CHAR);
@@ -2853,7 +2861,7 @@ END tab_cols;
                         FETCH c_indexes INTO p_indexes;
                         EXIT WHEN c_indexes%NOTFOUND;
 
-------------------------index build for standard build script
+------------------------ index build for standard build script
 			IF l_drop_index = 'Y' THEN
 	                        ins_line(k_index,'DROP INDEX '||LOWER(l_schema2||'ps'||p_indexes.indexid||p_recname||p_suffix||p_indexes.name_suffix));
 	                        ins_line(k_index,'/');
@@ -2879,8 +2887,8 @@ END tab_cols;
 		unset_action(p_action_name=>l_action);
         END mk_gt_indexes;
 
------------------------------------------------------------------------------------------------------------
---match with database
+-------------------------------------------------------------------------------------------------------
+-- match with database
 	PROCEDURE match_db IS
 		l_module VARCHAR2(48);
 		l_action VARCHAR2(32);
@@ -2897,11 +2905,11 @@ END tab_cols;
 			SET	t.match_db = 'N'
 			WHERE	t.table_type = 'P'
 			AND     t.match_db IS NULL
-			AND	(NOT EXISTS( --table not partitioned
+			AND	(NOT EXISTS( -- table not partitioned
 					SELECT table_name 
 					FROM user_part_tables o
 					WHERE o.table_name = t.table_name)
-			OR	NOT EXISTS( --index not partitioned
+			OR	NOT EXISTS( -- index not partitioned
 					SELECT table_name 
 					FROM user_part_indexes o
 					WHERE o.table_name = t.table_name)
@@ -2943,8 +2951,8 @@ END tab_cols;
 		unset_action(p_action_name=>l_action);
 	END match_db;
 
------------------------------------------------------------------------------------------------------------
---set index tablespace to partititon tablespace
+-------------------------------------------------------------------------------------------------------
+-- set index tablespace to partititon tablespace
 	PROCEDURE set_index_tablespace(p_type NUMBER, p_recname VARCHAR2, p_part_name VARCHAR2, 
                                        p_schema VARCHAR2, p_arch_flag VARCHAR2) IS
                 l_counter INTEGER := 0;
@@ -2969,7 +2977,7 @@ END tab_cols;
 		FOR p_indexes IN (	
 				SELECT	i.indexid, COALESCE(r.idx_tablespace,t.idx_tablespace) idx_tablespace
 				FROM	gfc_ps_indexdefn i
-					LEFT OUTER JOIN gfc_part_indexes pi --26.5.2010 only include partitioned indexes
+					LEFT OUTER JOIN gfc_part_indexes pi -- 26.5.2010 only include partitioned indexes
 					ON      pi.recname = i.recname
 					AND	pi.indexid = i.indexid
 				,	gfc_part_tables t
@@ -2978,14 +2986,14 @@ END tab_cols;
 				AND	r.part_name = p_part_name
 				AND	i.recname = t.recname
 				AND	r.part_id = t.part_id
-				AND	i.platform_ora = 1 --1.4.2009
+				AND	i.platform_ora = 1 -- 1.4.2009
 				AND	NVL(pi.part_type,t.part_type) != 'N'
 				ORDER BY 1
 				) LOOP
 			debug_msg('indexid='||p_indexes.indexid
                                 ||'idx_tablespace='||p_indexes.idx_tablespace,6);
 			IF p_indexes.idx_tablespace IS NOT NULL THEN
-				IF l_counter = 0 THEN --26.5.2010 added error control in case indexes are not partitioned
+				IF l_counter = 0 THEN -- 26.5.2010 added error control in case indexes are not partitioned
 					whenever_sqlerror(p_type,FALSE);
 				END IF;
 				ins_line(p_type,'ALTER INDEX '||LOWER(p_schema||'.'||l_index_prefix||p_indexes.indexid||p_recname)||
@@ -3002,8 +3010,8 @@ END tab_cols;
 		unset_action(p_action_name=>l_action);
 	END set_index_tablespace;
 
------------------------------------------------------------------------------------------------------------
---set index tablespace to partititon tablespace
+-------------------------------------------------------------------------------------------------------
+-- set index tablespace to partititon tablespace
 	PROCEDURE unset_index_tablespace(p_type NUMBER, p_recname VARCHAR2, p_schema VARCHAR2, p_arch_flag VARCHAR2) IS
                 l_counter INTEGER := 0;
 		l_module VARCHAR2(48);
@@ -3023,10 +3031,10 @@ END tab_cols;
 				SELECT	i.indexid, t.idx_tablespace
 				FROM	gfc_ps_indexdefn i
 				,	gfc_part_tables t --qwert add ps defaults
-				,	gfc_part_indexes pi --26.5.2010 only include partitioned indexes
+				,	gfc_part_indexes pi -- 26.5.2010 only include partitioned indexes
 				WHERE	t.recname = p_recname
 				AND	i.recname = p_recname
-				AND	i.platform_ora = 1 --1.4.2009
+				AND	i.platform_ora = 1 -- 1.4.2009
 				AND	pi.recname = p_recname
 				AND	pi.indexid = i.indexid
 				AND	pi.part_type != 'N'
@@ -3050,8 +3058,8 @@ END tab_cols;
 		unset_action(p_action_name=>l_action);
 	END unset_index_tablespace;
 
------------------------------------------------------------------------------------------------------------
-        PROCEDURE subpart_update_indexes(p_type           NUMBER
+-------------------------------------------------------------------------------------------------------
+PROCEDURE subpart_update_indexes(p_type           NUMBER
                                         ,p_recname        VARCHAR2
 	                                ,p_part_name      VARCHAR2
 	                                ,p_subpart_name   VARCHAR2
@@ -3112,8 +3120,8 @@ END tab_cols;
 		unset_action(p_action_name=>l_action);
 	END subpart_update_indexes;
 
------------------------------------------------------------------------------------------------------------
---generate partition clause on the basis of part ranges table - added 11.3.2013
+-------------------------------------------------------------------------------------------------------
+-- generate partition clause on the basis of part ranges table - added 11.3.2013
 PROCEDURE create_partex
 (p_type         NUMBER
 ,p_recname      VARCHAR2
@@ -3156,7 +3164,7 @@ BEGIN
   AND   pt.recname           = r.recname
   AND   pt.part_type         = 'R'
   AND	pr.part_id           = pt.part_id
-  AND   pr.part_no           = ( --get last range
+  AND   pr.part_no           = ( -- get last range
            SELECT MAX(pr1.part_no)
            FROM   gfc_part_ranges pr1
            WHERE  pr1.part_id = pt.part_id)
@@ -3187,7 +3195,7 @@ BEGIN
   IF l_default_partition_name IS NOT NULL THEN
     IF p_create_table THEN
 
-      --create table to be used for partition exchange
+      -- create table to be used for partition exchange
       ins_line(p_type,'CREATE TABLE '||LOWER(l_schema2||'gfc_'||p_recname));
       tab_cols(p_type=>p_type
               ,p_recname=>p_recname
@@ -3204,7 +3212,7 @@ BEGIN
       ins_line(p_type,'/');
       ins_line(p_type,'');
 
-      --create indexes
+      -- create indexes
       FOR p_indexes IN(
         SELECT   g.indexid, g.uniqueflag, g.platform_ora
 	,        i.override_schema
@@ -3214,7 +3222,7 @@ BEGIN
 	  AND i.indexid = g.indexid
         WHERE    g.recname = p_recname
         AND      g.platform_ora = 1
-        AND      i.part_id IS NULL --added 13.3.2013 to suppress build of global indexes
+        AND      i.part_id IS NULL -- added 13.3.2013 to suppress build of global indexes
         ORDER BY g.indexid)
       LOOP
         IF l_explicit_schema = 'Y' THEN
@@ -3232,7 +3240,7 @@ BEGIN
         ins_line(p_type,l_ind_def);
         ind_cols(p_type,p_recname,p_indexes.indexid,l_desc_index);
 
-        --index level storage clause
+        -- index level storage clause
         IF l_idx_tablespace IS NOT NULL THEN
           ins_line(p_type,'TABLESPACE '||l_idx_tablespace);
         END IF;
@@ -3246,7 +3254,7 @@ BEGIN
       p_create_table := FALSE;
     END IF;
 
-    --exchange
+    -- exchange
     ins_line(p_type,'ALTER TABLE '||LOWER(l_schema2||p_table_name));
     ins_line(p_type,'EXCHANGE PARTITION '||LOWER(l_default_partition_name));
     ins_line(p_type,'WITH TABLE '||LOWER(l_schema||'gfc_'||p_recname));
@@ -3254,7 +3262,7 @@ BEGIN
     ins_line(p_type,'/');
     ins_line(p_type,'');
 
-    --drop default
+    -- drop default
     ins_line(p_type,'ALTER TABLE '||LOWER(l_schema2||p_table_name));
     ins_line(p_type,'DROP PARTITION '||LOWER(l_default_partition_name));
     ins_line(p_type,'UPDATE GLOBAL INDEXES');
@@ -3268,9 +3276,9 @@ EXCEPTION
   WHEN no_data_found THEN unset_action(p_action_name=>l_action);
 
 END create_partex;
------------------------------------------------------------------------------------------------------------
---generate partition clause on the basis of part lists table
---wibble - need to add range support here for 11g
+-------------------------------------------------------------------------------------------------------
+-- generate partition clause on the basis of part lists table
+-- wibble - need to add range support here for 11g
 PROCEDURE create_subpartex
 (p_type         NUMBER
 ,p_recname      VARCHAR2
@@ -3315,7 +3323,7 @@ BEGIN
 		
   IF l_default_subpartition_name IS NOT NULL THEN
     IF p_create_table THEN
-      --create table
+      -- create table
       ins_line(p_type,'CREATE TABLE '||LOWER(l_schema||'gfc_'||p_recname));
       tab_cols(p_type,p_recname,l_longtoclob);
 
@@ -3329,7 +3337,7 @@ BEGIN
       ins_line(p_type,'/');
       ins_line(p_type,'');
 
-      --create indexes
+      -- create indexes
       FOR p_indexes IN(
         SELECT   g.indexid, g.uniqueflag, g.platform_ora
 	,        i.override_schema
@@ -3356,7 +3364,7 @@ BEGIN
         ins_line(p_type,l_ind_def);
         ind_cols(p_type,p_recname,p_indexes.indexid,l_desc_index);
 
-        --index level storage clause
+        -- index level storage clause
         IF l_idx_tablespace IS NOT NULL THEN
           ins_line(p_type,'TABLESPACE '||l_idx_tablespace);
         END IF;
@@ -3370,7 +3378,7 @@ BEGIN
       p_create_table := FALSE;
     END IF;
 
-    --exchange
+    -- exchange
     ins_line(p_type,'ALTER TABLE '||LOWER(l_schema2||p_table_name));
     ins_line(p_type,'EXCHANGE SUBPARTITION '||LOWER(l_default_subpartition_name));
     ins_line(p_type,'WITH TABLE '||LOWER(l_schema||'gfc_'||p_recname));
@@ -3378,7 +3386,7 @@ BEGIN
     ins_line(p_type,'/');
     ins_line(p_type,'');
 
-    --drop default
+    -- drop default
     ins_line(p_type,'ALTER TABLE '||LOWER(l_schema2||p_table_name));
     ins_line(p_type,'DROP SUBPARTITION '||LOWER(l_default_subpartition_name));
     ins_line(p_type,'/');
@@ -3391,8 +3399,8 @@ EXCEPTION
   WHEN no_data_found THEN unset_action(p_action_name=>l_action);
 
 END create_subpartex;
------------------------------------------------------------------------------------------------------------
---generate partition clause on the basis of part ranges table
+-------------------------------------------------------------------------------------------------------
+-- generate partition clause on the basis of part ranges table
 PROCEDURE drop_subpartex
 (p_type       NUMBER
 ,p_recname    VARCHAR2
@@ -3414,14 +3422,14 @@ BEGIN
   dbms_application_info.read_module(module_name=>l_module, action_name=>l_action);
   set_action(p_action_name=>'DROP_SUBPARTEX');
 
-  --18.2.2011 - hint logic moved inside loop here
+  -- 18.2.2011 - hint logic moved inside loop here
   l_hint := '+APPEND';
   IF l_logging = 'N' THEN
      l_hint := l_hint||' NOLOGGING';
   END IF;
 
-  --2.10.2010 - make copy go parallel, moved head 16.1.2011
-  IF l_parallel_table = 'Y' THEN --16.1.2011 removed alter and used 2 hints
+  -- 2.10.2010 - make copy go parallel, moved head 16.1.2011
+  IF l_parallel_table = 'Y' THEN -- 16.1.2011 removed alter and used 2 hints
     l_hint  := l_hint||' PARALLEL(T)';
     l_hint2 :=       '/*+PARALLEL(S)*/';
   ELSE
@@ -3451,7 +3459,7 @@ BEGIN
 
 		
 		IF l_subpart_name IS NOT NULL THEN
-			--add default partiton
+			-- add default partiton
 			ins_line(p_type,'ALTER TABLE '||LOWER(l_schema2||p_table_name));
 			ins_line(p_type,'MODIFY PARTITION '||LOWER(p_recname||'_'||p_part_name)
 			             ||' ADD SUBPARTITION '||LOWER(p_recname||'_'||p_part_name||'_'||l_subpart_name));
@@ -3464,8 +3472,8 @@ BEGIN
        	                ins_line(p_type,'');
 	
 
-			--exchange default partiton back into part table
-			IF l_repopdfltsub = 'N' THEN --added 29.3.2011 
+			-- exchange default partiton back into part table
+			IF l_repopdfltsub = 'N' THEN -- added 29.3.2011 
 	                        ins_line(p_type,'ALTER TABLE '||LOWER(l_schema2||p_table_name));
 	       	                ins_line(p_type,'EXCHANGE SUBPARTITION '
 					||LOWER(p_recname||'_'||p_part_name||'_'||l_subpart_name));
@@ -3473,7 +3481,7 @@ BEGIN
                 	        ins_line(p_type,'INCLUDING INDEXES WITH VALIDATION UPDATE GLOBAL INDEXES');
         	                ins_line(p_type,'/');
 	       	                ins_line(p_type,'');
-			ELSE --added 29.3.2011 optionally force repopulation of default partition
+			ELSE -- added 29.3.2011 optionally force repopulation of default partition
                         	ins_line(p_type,'INSERT /*'||l_hint||'*/ INTO '||LOWER(l_schema2||p_table_name)||' t');
                         	ins_line(p_type,'SELECT '||l_hint2||' * FROM '||LOWER(l_schema||'gfc_'||p_recname)||' s');
                         	ins_line(p_type,'/');
@@ -3483,7 +3491,7 @@ BEGIN
 			END IF;
 
 			IF p_drop_table THEN
-				--drop partex table
+				-- drop partex table
         	                ins_line(p_type,'DROP TABLE '||LOWER(l_schema||'gfc_'||p_recname)||l_drop_purge_suffix);
                 	        ins_line(p_type,'/');
        	                	ins_line(p_type,'');
@@ -3497,8 +3505,8 @@ EXCEPTION
 
 
 END drop_subpartex;
------------------------------------------------------------------------------------------------------------
---generate partition clause on the basis of part ranges table
+-------------------------------------------------------------------------------------------------------
+-- generate partition clause on the basis of part ranges table
 PROCEDURE add_tab_subparts
 (p_type NUMBER
 , p_recname VARCHAR2
@@ -3508,7 +3516,7 @@ PROCEDURE add_tab_subparts
 ,p_part_type    VARCHAR2
 ,p_subpart_type VARCHAR2
 ,p_part_name    VARCHAR2 DEFAULT ''
-,p_arch_flag    VARCHAR2 DEFAULT 'N' --added 15.3.2013
+,p_arch_flag    VARCHAR2 DEFAULT 'N' -- added 15.3.2013
 ) IS
   CURSOR c_tab_subparts(p_table_name VARCHAR2
 		       ,p_recname    VARCHAR2) IS
@@ -3581,7 +3589,7 @@ BEGIN
                   ' ADD SUBPARTITION '||
                   LOWER(p_recname||'_'||p_tab_subparts.part_name||'_'||p_tab_subparts.subpart_name));
 
-    IF p_subpart_type = 'L' THEN /*List*/
+    IF p_subpart_type = 'L' THEN -- list
      ins_line(p_type,'VALUES ('||p_tab_subparts.list_value||')');
     END IF;
 
@@ -3604,7 +3612,7 @@ BEGIN
     ins_line(p_type,'/');
     ins_line(p_type,'');
 
----qwert---could consider adding move rows for this list partition from exchange table 
+---qwert--- could consider adding move rows for this list partition from exchange table 
   END LOOP;
   CLOSE c_tab_subparts;
 
@@ -3619,8 +3627,8 @@ BEGIN
   unset_action(p_action_name=>l_action);
 END add_tab_subparts;
 
------------------------------------------------------------------------------------------------------------
---generate partition clause on the basis of part ranges table
+-------------------------------------------------------------------------------------------------------
+-- generate partition clause on the basis of part ranges table
 PROCEDURE add_tab_parts
 (p_type             NUMBER
 ,p_recname          VARCHAR2
@@ -3670,7 +3678,7 @@ BEGIN
     AND NOT EXISTS(
       SELECT 'x'
       FROM   gfc_part_ranges pr1
-      ,      dba_tab_partitions tp1 --enhancement 23.4.2010
+      ,      dba_tab_partitions tp1 -- enhancement 23.4.2010
       WHERE  pr1.part_id = pr.part_id
       AND    pr1.part_no > pr.part_no
       AND    tp1.table_owner = t.owner
@@ -3682,14 +3690,14 @@ BEGIN
     debug_msg('Part Range:'||p_tab_parts.part_No||'/'||p_tab_parts.part_name,6);
     l_counter := l_counter + 1;
 
-    --alter indexes to set tablespace to partition tablespace
+    -- alter indexes to set tablespace to partition tablespace
     set_index_tablespace(p_type, p_recname, p_tab_parts.part_name, p_table_owner, p_arch_flag);
 
     ins_line(p_type,'ALTER TABLE '||LOWER(p_table_owner||'.'||p_table_name)
                                   ||' ADD PARTITION '||LOWER(p_part_name||'_'||p_tab_parts.part_name));
     IF p_part_type = 'R' THEN
       ins_line(p_type,'VALUES LESS THAN ('||p_tab_parts.part_value||')');
-    ELSIF p_part_type = 'L' THEN /*List*/
+    ELSIF p_part_type = 'L' THEN -- list
       ins_line(p_type,'VALUES ('||p_tab_parts.part_value||')');
     END IF;
 
@@ -3698,7 +3706,7 @@ BEGIN
     END IF;
 
     IF p_tab_parts.tab_storage IS NOT NULL THEN
-      ins_line(p_type,tab_storage(p_recname, p_tab_parts.tab_storage)); --6.9.2007
+      ins_line(p_type,tab_storage(p_recname, p_tab_parts.tab_storage)); -- 6.9.2007
     END IF;
 
     IF p_subpart_type = 'H' AND p_subpartitions > 1 THEN
@@ -3724,16 +3732,16 @@ BEGIN
   END LOOP;
 
   IF l_counter > 0 THEN
-    --reset index tablespace at table level
+    -- reset index tablespace at table level
     unset_index_tablespace(p_type, p_recname, p_table_owner, p_arch_flag);
-    --ins_line(p_type,'spool off');
+    -- ins_line(p_type,'spool off');
   END IF;
 
   unset_action(p_action_name=>l_action);
 END add_tab_parts;
 
------------------------------------------------------------------------------------------------------------
---11.3.2013 add procdure to exchange maxvalue range partition out
+-------------------------------------------------------------------------------------------------------
+-- 11.3.2013 add procdure to exchange maxvalue range partition out
 PROCEDURE add_tab_parts_newmax
 (p_type             NUMBER
 ,p_recname          VARCHAR2
@@ -3749,7 +3757,7 @@ PROCEDURE add_tab_parts_newmax
   l_part_def     VARCHAR2(200 CHAR);
   l_counter      INTEGER := 0;
   l_subpartition INTEGER;
-  l_create_table BOOLEAN := TRUE; --set this flag true just once
+  l_create_table BOOLEAN := TRUE; -- set this flag true just once
   l_hint         VARCHAR2(100 CHAR);
   l_hint2        VARCHAR2(100 CHAR);
 
@@ -3778,7 +3786,7 @@ BEGIN
           ||'/part_name='    ||p_part_name,6);
 
   BEGIN
-    --get details of maxvalue partition
+    -- get details of maxvalue partition
     SELECT  r.part_no
     ,       r.part_name
     ,       r.part_value
@@ -3795,7 +3803,7 @@ BEGIN
     ,       l_idx_storage     
     FROM    gfc_part_ranges r
     WHERE   r.part_id = p_part_id
-    AND     r.part_no = ( --get the maxvalue partition
+    AND     r.part_no = ( -- get the maxvalue partition
               SELECT MAX(r1.part_no)
               FROM   gfc_part_ranges r1
               WHERE  r1.part_id = p_part_id)
@@ -3810,36 +3818,36 @@ BEGIN
       AND    t.table_name = UPPER(p_table_name)
       AND    t.partitioned = 'YES'
       AND    pt.recname = p_recname
-      AND    pt.part_type = 'R' --range partitioned only
-      AND    pt.subpart_type = 'N' --exclude subpartitioned tables
+      AND    pt.part_type = 'R' -- range partitioned only
+      AND    pt.subpart_type = 'N' -- exclude subpartitioned tables
       AND    pt.part_id = p_part_id
       AND    pr.part_id = pt.part_id
       AND    (pr.arch_flag = p_arch_flag OR p_arch_flag IS NULL)
       AND    pr.part_no < l_part_no
-      AND NOT EXISTS( --this partition
+      AND NOT EXISTS( -- this partition
         SELECT 'x'
         FROM   dba_tab_partitions tp
         WHERE  tp.table_owner = t.owner
         AND    tp.table_name = t.table_name 
         AND    tp.partition_name = p_part_name||'_'||pr.part_name
         )
-      AND NOT EXISTS( --any higher partition other than maxvalue partition
+      AND NOT EXISTS( -- any higher partition other than maxvalue partition
         SELECT 'x'
         FROM   gfc_part_ranges pr1
         ,      dba_tab_partitions tp1 
         WHERE  pr1.part_id = pr.part_id
         AND    pr1.part_no > pr.part_no
-        AND    pr1.part_no < l_part_no --but excluding the maxvalue partition
+        AND    pr1.part_no < l_part_no -- but excluding the maxvalue partition
         AND    tp1.table_owner = t.owner
         AND    tp1.table_name = t.table_name
         AND    tp1.partition_name = p_part_name||'_'||pr1.part_name
         )
-      AND EXISTS( --maxvalue partition
+      AND EXISTS( -- maxvalue partition
         SELECT 'x'
         FROM   gfc_part_ranges pr2
         ,      dba_tab_partitions tp2
         WHERE  pr2.part_id = pr.part_id
-        AND    pr2.part_no = l_part_no --the maxvalue partition
+        AND    pr2.part_no = l_part_no -- the maxvalue partition
         AND    tp2.table_owner = t.owner
         AND    tp2.table_name = t.table_name
         AND    tp2.partition_name = p_part_name||'_'||pr2.part_name
@@ -3850,18 +3858,18 @@ BEGIN
       l_counter := l_counter + 1;
   
       IF l_counter = 1 THEN
-        --create a part echange table first time round only because l_create_tables is set to false in package
+        -- create a part echange table first time round only because l_create_tables is set to false in package
         create_partex(p_type=>p_type, p_recname=>p_recname, p_table_name=>p_table_name, p_create_table=>l_create_table);
       END IF;
   
-      --alter indexes to set tablespace to partition tablespace
+      -- alter indexes to set tablespace to partition tablespace
       set_index_tablespace(p_type, p_recname, p_tab_parts.part_name, p_table_owner, p_arch_flag);
 
       ins_line(p_type,'ALTER TABLE '||LOWER(p_table_owner||'.'||p_table_name)
                                     ||' ADD PARTITION '||LOWER(p_part_name||'_'||p_tab_parts.part_name));
 --    IF p_part_type = 'R' THEN
         ins_line(p_type,'VALUES LESS THAN ('||p_tab_parts.part_value||')');
---    ELSIF p_part_type = 'L' THEN /*List*/
+--    ELSIF p_part_type = 'L' THEN -- list
 --      ins_line(p_type,'VALUES ('||p_tab_parts.part_value||')');
 --    END IF;
 
@@ -3870,7 +3878,7 @@ BEGIN
       END IF;
 
       IF p_tab_parts.tab_storage IS NOT NULL THEN
-        ins_line(p_type,tab_storage(p_recname, p_tab_parts.tab_storage)); --6.9.2007
+        ins_line(p_type,tab_storage(p_recname, p_tab_parts.tab_storage)); -- 6.9.2007
       END IF;
 
       IF p_subpart_type = 'H' AND p_subpartitions > 1 THEN
@@ -3894,15 +3902,15 @@ BEGIN
       ins_line(p_type,'/');
       ins_line(p_type,'');
 
-      --reset index tablespace at table level
+      -- reset index tablespace at table level
       unset_index_tablespace(p_type, p_recname, p_table_owner, p_arch_flag);
     END LOOP;
  
-   IF l_counter > 0 THEN --if we did anything at all, do the end stuff
-      --alter indexes to set tablespace to partition tablespace for max value partition
+   IF l_counter > 0 THEN -- if we did anything at all, do the end stuff
+      -- alter indexes to set tablespace to partition tablespace for max value partition
       set_index_tablespace(p_type, p_recname, l_part_name, p_table_owner, p_arch_flag);
 
-      --add new maxvalue partition
+      -- add new maxvalue partition
       ins_line(p_type,'ALTER TABLE '||LOWER(p_table_owner||'.'||p_table_name)
                                     ||' ADD PARTITION '||LOWER(p_part_name||'_'||l_part_name));
       ins_line(p_type,'VALUES LESS THAN ('||l_part_value||')');
@@ -3910,7 +3918,7 @@ BEGIN
         ins_line(p_type,'TABLESPACE '||l_tab_tablespace);
       END IF;
       IF l_tab_storage IS NOT NULL THEN
-        ins_line(p_type,tab_storage(p_recname, l_tab_storage)); --6.9.2007
+        ins_line(p_type,tab_storage(p_recname, l_tab_storage)); -- 6.9.2007
       END IF;
 
       IF p_subpart_type = 'H' AND p_subpartitions > 1 THEN
@@ -3934,7 +3942,7 @@ BEGIN
       ins_line(p_type,'/');
       ins_line(p_type,'');
 
-      --reset index tablespace at table level
+      -- reset index tablespace at table level
       unset_index_tablespace(p_type, p_recname, p_table_owner, p_arch_flag);
 
       --hint logic 
@@ -3949,27 +3957,28 @@ BEGIN
         l_hint2 := '';
       END IF;
 
-      --insert back from maxvalue
+      -- insert back from maxvalue
       ins_line(p_type,'INSERT /*'||l_hint||'*/ INTO '||LOWER(l_schema2||p_table_name)||' t');
       ins_line(p_type,'SELECT '||l_hint2||' * FROM '||LOWER(l_schema2||'gfc_'||p_recname)||' s');
       ins_line(p_type,'/');
 
-      --drop partex table
+      -- drop partex table
       ins_line(p_type,'DROP TABLE '||LOWER(l_schema2||'gfc_'||p_recname)||l_drop_purge_suffix);
       ins_line(p_type,'/');
       ins_line(p_type,'');
     END IF;
 
   EXCEPTION 
-    WHEN no_data_found THEN NULL; --if no max partition abandon package
+    WHEN no_data_found THEN NULL; -- if no max partition abandon package
   END;
 
   unset_action(p_action_name=>l_action);
 END add_tab_parts_newmax;
 
 
------------------------------------------------------------------------------------------------------------
---generate split partition clause on the basis of part ranges table -- procedure added 23.4.2010
+-------------------------------------------------------------------------------------------------------
+-- generate split partition clause on the basis of part ranges table -- procedure added 23.4.2010
+-------------------------------------------------------------------------------------------------------
 PROCEDURE split_tab_parts
 (p_type          NUMBER
 ,p_recname       VARCHAR2
@@ -4006,8 +4015,8 @@ BEGIN
     ,      pr2.idx_tablespace idx_tablespace2
     ,      pr2.tab_storage    tab_storage2
     ,      pr2.idx_storage    idx_storage2
-    FROM   gfc_part_ranges pr  --the missing partition
-    ,      gfc_part_ranges pr2 --the next partition that exists
+    FROM   gfc_part_ranges pr  -- the missing partition
+    ,      gfc_part_ranges pr2 -- the next partition that exists
     ,      dba_tables t
     WHERE  t.owner = p_table_owner
     AND    t.table_name = p_table_name
@@ -4015,7 +4024,7 @@ BEGIN
     AND    (pr.arch_flag = p_arch_flag OR p_arch_flag IS NULL)
     AND    pr.part_id = p_part_id
     AND    pr2.part_id = pr.part_id
-    AND    pr2.part_no = ( --next partition that exists
+    AND    pr2.part_no = ( -- next partition that exists
            SELECT MIN(pr2a.part_no)
            FROM   gfc_part_ranges pr2a
            ,      dba_tab_partitions tp2
@@ -4025,14 +4034,14 @@ BEGIN
            AND    tp2.table_name = t.table_name
            AND    tp2.partition_name = p_part_name||'_'||pr2a.part_name
            )
-    AND NOT EXISTS( --partition in question exists
+    AND NOT EXISTS( -- partition in question exists
            SELECT 'x'
            FROM   dba_tab_partitions tp
            WHERE  tp.table_owner = t.owner
            AND    tp.table_name = t.table_name
            AND    tp.partition_name = p_part_name||'_'||pr.part_name
            )
-    AND EXISTS( --a subsequent partition exists-this might be tortology
+    AND EXISTS( -- a subsequent partition exists-this might be tortology
            SELECT 'x'
            FROM   gfc_part_ranges pr1
            ,      dba_tab_partitions tp1
@@ -4052,15 +4061,15 @@ BEGIN
 
     l_counter := l_counter + 1;
 
-    --alter indexes to set tablespace to partition tablespace
+    -- alter indexes to set tablespace to partition tablespace
     set_index_tablespace(p_type, p_recname, p_tab_parts.part_name, p_table_owner, p_arch_flag);
 
-    --rename high partition - 6.2.2012
+    -- rename high partition - 6.2.2012
     IF p_subpart_Type = 'H' AND p_subpartitions > 1 THEN
        rename_subparts(p_type=>p_type, p_table_name=>p_table_name, p_part_name=>UPPER(p_part_name||'_'||p_tab_parts.part_name2), p_drop_index=>'N');
     END IF;
 
---start partition split command
+-- start partition split command
     ins_line(p_type,'ALTER TABLE '||LOWER(p_table_owner||'.'||p_table_name)
                                   ||' SPLIT PARTITION '||LOWER(p_part_name  ||'_'||p_tab_parts.part_name2));
     ins_line(p_type,'AT ('||p_tab_parts.part_value||') INTO');
@@ -4071,10 +4080,10 @@ BEGIN
       ins_line(p_type,'TABLESPACE '||p_tab_parts.tab_tablespace);
     END IF;
     IF p_tab_parts.tab_storage IS NOT NULL THEN
-      ins_line(p_type,tab_storage(p_recname, p_tab_parts.tab_storage)); --6.9.2007
+      ins_line(p_type,tab_storage(p_recname, p_tab_parts.tab_storage)); -- 6.9.2007
     END IF;
 
-    --build hash subpartition definitions
+    -- build hash subpartition definitions
     IF p_subpart_type = 'H' AND p_subpartitions > 1 THEN
       FOR l_subpartition IN 1..p_subpartitions LOOP
         IF l_subpartition = 1 THEN
@@ -4094,16 +4103,16 @@ BEGIN
 		,p_part_name);
     END IF;
 
---second partition in split
+-- second partition in split
     ins_line(p_type,',PARTITION '||LOWER(p_part_name||'_'||p_tab_parts.part_name2));
     IF p_tab_parts.tab_tablespace2 IS NOT NULL THEN
       ins_line(p_type,'TABLESPACE '||p_tab_parts.tab_tablespace2);
     END IF;
-    IF p_tab_parts.tab_storage2 IS NOT NULL THEN --11.3.2013--change to test tab_Storage2
-      ins_line(p_type,tab_storage(p_recname, p_tab_parts.tab_storage2)); --6.9.2007
+    IF p_tab_parts.tab_storage2 IS NOT NULL THEN -- 11.3.2013-- change to test tab_Storage2
+      ins_line(p_type,tab_storage(p_recname, p_tab_parts.tab_storage2)); -- 6.9.2007
     END IF;
 
-    --build hash subpartition definitions
+    -- build hash subpartition definitions
     IF p_subpart_type = 'H' AND p_subpartitions > 1 THEN
       FOR l_subpartition IN 1..p_subpartitions LOOP
         IF l_subpartition = 1 THEN
@@ -4123,27 +4132,27 @@ BEGIN
                    ,p_part_name);
     END IF;
 
---tail piece
+-- tail piece
     ins_line(p_type,') UPDATE INDEXES');
     ins_line(p_type,'/');
     ins_line(p_type,'');
   END LOOP;
 
   IF l_counter > 0 THEN
-    --reset index tablespace at table level
+    -- reset index tablespace at table level
     unset_index_tablespace(p_type, p_recname, p_table_owner, p_arch_flag);
-    --ins_line(p_type,'spool off');
+    -- ins_line(p_type,'spool off');
   END IF;
   unset_action(p_action_name=>l_action);
 END split_tab_parts;
 
------------------------------------------------------------------------------------------------------------
---process partitioned tables
-        PROCEDURE part_tables(p_part_id VARCHAR2 DEFAULT ''
+-------------------------------------------------------------------------------------------------------
+-- process partitioned tables
+PROCEDURE part_tables(p_part_id VARCHAR2 DEFAULT ''
                              ,p_recname VARCHAR2 DEFAULT '') IS
                 l_hint      VARCHAR2(100 CHAR);
                 l_hint2     VARCHAR2(100 CHAR);
-                l_sess_para VARCHAR2(100 CHAR); --added 1.11.2012 to hold session parallel dml command
+                l_sess_para VARCHAR2(100 CHAR); -- added 1.11.2012 to hold session parallel dml command
                 l_counter   INTEGER := 0;
                 l_degree    VARCHAR2(100 CHAR);
 		l_schema    VARCHAR2(30 CHAR);
@@ -4168,7 +4177,7 @@ END split_tab_parts;
                 	AND     t.match_db = 'N'
 	                AND     t.rectype =0
         	        AND     t.recname = p.recname
---              	  AND 	EXISTS( --check that partitioning column exists
+--              	  AND 	EXISTS( -- check that partitioning column exists
 --					SELECT	'x'
 --					FROM	gfc_ps_tab_columns c
 --					WHERE	c.fieldname = p.part_column
@@ -4186,7 +4195,7 @@ END split_tab_parts;
 				OR	l_longtoclob = 'Y'
 				)
 			AND	(p.recname LIKE p_recname OR p_recname IS NULL)
-			AND	(p.part_id LIKE p_part_id OR p_part_id IS NULL) --added 11.2.2013
+			AND	(p.part_id LIKE p_part_id OR p_part_id IS NULL) -- added 11.2.2013
 	                ORDER BY t.recname		
 		) LOOP
 	                IF l_explicit_schema = 'Y' THEN
@@ -4196,24 +4205,24 @@ END split_tab_parts;
 			END IF;
 
 			IF p_tables.arch_flag IN('A','D') THEN
-				l_arch_flag := 'N'; --build the non-arch partitions only
+				l_arch_flag := 'N'; -- build the non-arch partitions only
 			ELSE
-				l_arch_flag := ''; --build all partitions
+				l_arch_flag := ''; -- build all partitions
 			END IF;
 
-                  --ins_line(k_build,'set echo on pause off verify on feedback on timi on autotrace off pause off lines 100');
-                  --ins_line(k_build,LOWER('spool '||LOWER(l_scriptid)||'_'||l_dbname||'_'||p_tables.recname||'.lst'));
+                  -- ins_line(k_build,'set echo on pause off verify on feedback on timi on autotrace off pause off lines 100');
+                  -- ins_line(k_build,LOWER('spool '||LOWER(l_scriptid)||'_'||l_dbname||'_'||p_tables.recname||'.lst'));
                   signature(k_build,FALSE,l_scriptid,p_tables.recname);
  		  ins_line(k_build,'rem Partitioning Scheme '||p_tables.part_id);
                   whenever_sqlerror(k_build,TRUE);
-                  ddlpermit(k_build,TRUE); --added 10.10.2007
+                  ddlpermit(k_build,TRUE); -- added 10.10.2007
 
-                  --ins_line(k_alter,'set echo on pause off verify on feedback on timi on autotrace off pause off lines 100');
-                  --ins_line(k_alter,LOWER('spool gfcalter_'||l_dbname||'_'||p_tables.recname||'.lst'));
+                  -- ins_line(k_alter,'set echo on pause off verify on feedback on timi on autotrace off pause off lines 100');
+                  -- ins_line(k_alter,LOWER('spool gfcalter_'||l_dbname||'_'||p_tables.recname||'.lst'));
                   signature(k_alter,TRUE,'gfcalter',p_tables.recname);
  	            ins_line(k_alter,'rem Partitioning Scheme '||p_tables.part_id);
 
-			IF p_tables.src_table_name IS NULL THEN --added 8.6.2010
+			IF p_tables.src_table_name IS NULL THEN -- added 8.6.2010
 	                        whenever_sqlerror(k_build,FALSE);
         	                ins_line(k_build,'DROP TABLE '||LOWER(l_schema||'old_'||p_tables.recname)||l_drop_purge_suffix);
 				ins_line(k_build,'/');
@@ -4240,7 +4249,7 @@ END split_tab_parts;
                         ins_line(k_build,'CREATE TABLE '||LOWER(l_schema||'gfc_'||p_tables.recname));
                         tab_cols(k_build,p_tables.recname,l_longtoclob,p_tables.organization,'gfc_');
 
-			IF p_tables.organization = 'I' THEN --25.5.2011 add organisation here if IOT
+			IF p_tables.organization = 'I' THEN -- 25.5.2011 add organisation here if IOT
                                 ins_line(k_build,'ORGANIZATION INDEX');
 			END IF;
 
@@ -4248,20 +4257,20 @@ END split_tab_parts;
                                 ins_line(k_build,'TABLESPACE '||p_tables.tab_tablespace);
                         END IF;
 
-			IF p_tables.organization = 'I' THEN --use index storage for IOT
+			IF p_tables.organization = 'I' THEN -- use index storage for IOT
 	                        IF p_tables.idx_storage IS NOT NULL THEN
-        	                        ins_line(k_build,idx_storage(p_tables.recname, '_', p_tables.idx_storage)); --25.5.2011
+        	                        ins_line(k_build,idx_storage(p_tables.recname, '_', p_tables.idx_storage)); -- 25.5.2011
                 	        END IF;
 			ELSE 
 	                        IF p_tables.tab_storage IS NOT NULL THEN
-        	                        ins_line(k_build,tab_storage(p_tables.recname, p_tables.tab_storage)); --6.9.2007
+        	                        ins_line(k_build,tab_storage(p_tables.recname, p_tables.tab_storage)); -- 6.9.2007
                 	        END IF;
 			END IF;
 
 			IF p_tables.part_type = 'R' THEN
 	                        ins_line(k_build,'PARTITION BY RANGE('||p_tables.part_column||')');
 				IF p_tables.organization = 'I' THEN
-					NULL; --25.5.2011 can't subpartition IOTs
+					NULL; -- 25.5.2011 cannot subpartition IOTs
         	                ELSIF p_tables.subpart_type = 'H' AND 
                                    p_tables.hash_partitions > 1 AND 
                                    p_tables.subpart_column IS NOT NULL THEN
@@ -4290,7 +4299,7 @@ END split_tab_parts;
                         END IF;
 
                         ins_line(k_build,'ENABLE ROW MOVEMENT');
---9.10.2003 - create table with parallelism enabled
+-- 9.10.2003 - create table with parallelism enabled
                         IF l_parallel_index = 'Y' THEN
                                 ins_line(k_build,'PARALLEL');
 			ELSE
@@ -4301,7 +4310,7 @@ END split_tab_parts;
                         END IF;
                         ins_line(k_build,'/');
                         ins_line(k_build,'');
---9.10.2003 - was UBS specific but made generic
+-- 9.10.2003 - was UBS specific but made generic
 			IF l_roles = 'Y' THEN
                         	ins_line(k_build,'GRANT SELECT ON '||LOWER(l_schema||'gfc_'||p_tables.recname)
                                                      ||' TO '||LOWER(l_read_all));
@@ -4312,39 +4321,39 @@ END split_tab_parts;
                 	        ins_line(k_build,'');
 			END IF;
 
-			--18.2.2011 - hint logic moved inside loop here
+			-- 18.2.2011 - hint logic moved inside loop here
 			l_hint := '+APPEND';
                 	IF l_logging = 'N' THEN
                         	l_hint := l_hint||' NOLOGGING';
 	                END IF;
 
-			--2.10.2010 - make copy go parallel, moved head 16.1.2011
-			l_sess_para := 'ALTER SESSION '; --added 1.11.2012 set session parallelism
-                        IF l_parallel_table = 'Y' THEN --16.1.2011 removed alter and used 2 hints
+			-- 2.10.2010 - make copy go parallel, moved head 16.1.2011
+			l_sess_para := 'ALTER SESSION '; -- added 1.11.2012 set session parallelism
+                        IF l_parallel_table = 'Y' THEN -- 16.1.2011 removed alter and used 2 hints
 				l_hint  := l_hint||' PARALLEL(T)';
 				l_hint2 :=       '/*+PARALLEL(S)*/';
-				l_sess_para := l_sess_para||'ENABLE'; --added 1.11.2012 set session parallelism
+				l_sess_para := l_sess_para||'ENABLE'; -- added 1.11.2012 set session parallelism
 			ELSE
 				l_hint2 := '';
-				l_sess_para := l_sess_para||'DISABLE'; --added 1.11.2012 set session parallelism
+				l_sess_para := l_sess_para||'DISABLE'; -- added 1.11.2012 set session parallelism
 			END IF;
 			l_sess_para := l_sess_para||' PARALLEL DML';
 
---18.9.2003-added trigger to prevent updates on tables whilst being rebuilt - will be dropped when table is dropped
---5.5.2010-only query source table if it exists
+-- 18.9.2003-added trigger to prevent updates on tables whilst being rebuilt - will be dropped when table is dropped
+-- 5.5.2010-only query source table if it exists
 			IF p_tables.src_table_name IS NOT NULL THEN
 
-	                        ins_line(k_build,l_sess_para); --added 1.11.2012
+	                        ins_line(k_build,l_sess_para); -- added 1.11.2012
 				ins_line(k_build,'/');
                 	        ins_line(k_build,'');
 
-	                        ins_line(k_build,'BEGIN'); /*1.10.2010 insert in PL/SQL block*/
+	                        ins_line(k_build,'BEGIN'); -- 1.10.2010 insert in PL/SQL block
 	                        ins_line(k_build,'INSERT /*'||l_hint||'*/ INTO '
                                                       ||LOWER(l_schema||'gfc_'||p_tables.recname)||' t (');
 	                        tab_col_list(k_build,p_tables.recname,p_column_name=>TRUE);
 	                        ins_line(k_build,') SELECT '||l_hint2);
 	                        tab_col_list(k_build,p_tables.recname,p_tables.src_table_name,p_column_name=>FALSE); 
-				--20.10.2008 - added criteria option
+				-- 20.10.2008 - added criteria option
 				IF p_tables.criteria IS NOT NULL THEN
 					ins_line(k_build,'FROM '||LOWER(l_schema||p_tables.src_table_name)||' s');
 		                        ins_line(k_build,p_tables.criteria||';');
@@ -4358,7 +4367,7 @@ END split_tab_parts;
 
 			ELSIF p_tables.ora_table_name IS NOT NULL THEN
 	                        ins_line(k_build,'LOCK TABLE '||LOWER(l_schema||p_tables.ora_table_name)
-				         ||' IN EXCLUSIVE MODE'); --lock table to ensure trigger creates
+				         ||' IN EXCLUSIVE MODE'); -- lock table to ensure trigger creates
 				ins_line(k_build,'/');
                         	ins_line(k_build,'');
 
@@ -4372,24 +4381,24 @@ END split_tab_parts;
         	                ins_line(k_build,'/');
                 	        ins_line(k_build,'');
 
-                	        ins_line(k_build,'COMMIT'); --explicit commit added 27.11.2012
+                	        ins_line(k_build,'COMMIT'); -- explicit commit added 27.11.2012
 				ins_line(k_build,'/');
-	                        ins_line(k_build,l_sess_para); --added 1.11.2012, 27.11.2012 moved in front of lock
+	                        ins_line(k_build,l_sess_para); -- added 1.11.2012, 27.11.2012 moved in front of lock
 				ins_line(k_build,'/');
                 	        ins_line(k_build,'');
 
 	                        ins_line(k_build,'LOCK TABLE '||LOWER(l_schema||p_tables.ora_table_name)
-				         ||' IN EXCLUSIVE MODE'); --lock table to prevent consistent reads on query
+				         ||' IN EXCLUSIVE MODE'); -- lock table to prevent consistent reads on query
 				ins_line(k_build,'/');
                         	ins_line(k_build,'');
 
-	                        ins_line(k_build,'BEGIN'); /*1.10.2010 insert in PL/SQL block*/
+	                        ins_line(k_build,'BEGIN'); -- 1.10.2010 insert in PL/SQL block
 	                        ins_line(k_build,'INSERT /*'||l_hint||'*/ INTO '
                                                       ||LOWER(l_schema||'gfc_'||p_tables.recname)||' t (');
 	                        tab_col_list(k_build,p_tables.recname,p_column_name=>TRUE);
 	                        ins_line(k_build,') SELECT '||l_hint2);
 	                        tab_col_list(k_build,p_tables.recname,p_tables.ora_table_name,p_column_name=>FALSE);
---20.10.2008 - added criteria option
+-- 20.10.2008 - added criteria option
 				IF p_tables.criteria IS NOT NULL THEN
        		                	ins_line(k_build,'FROM '||LOWER(l_schema||p_tables.ora_table_name)||' s');
 		                        ins_line(k_build,p_tables.criteria||';');
@@ -4405,23 +4414,23 @@ END split_tab_parts;
 
                         mk_part_indexes(p_tables.recname,p_tables.table_name, l_schema1, l_arch_flag); 
                         pause_sql(k_alter);
---9.10.2003 - alter table to logging and noparallel
+-- 9.10.2003 - alter table to logging and noparallel
 			whenever_sqlerror(k_build,TRUE);
-			IF p_tables.organization = 'I' THEN --25.5.2011 add organisation here if IOT
+			IF p_tables.organization = 'I' THEN -- 25.5.2011 add organisation here if IOT
         	                ins_line(k_build,l_noalterprefix||'ALTER TABLE '||LOWER(l_schema||'gfc_'||p_tables.recname)
-				                          ||' LOGGING NOPARALLEL'); --25.5.2011
+				                          ||' LOGGING NOPARALLEL'); -- 25.5.2011
 				ins_line(k_build,'/');
 			ELSE
-	                        --changed 1.5.2010 to make new table noparallel logging
+	                        -- changed 1.5.2010 to make new table noparallel logging
         	                ins_line(k_build,l_noalterprefix||'ALTER TABLE '||LOWER(l_schema||'gfc_'||p_tables.recname)
-				                          ||' LOGGING NOPARALLEL MONITORING'); --6.9.2007
+				                          ||' LOGGING NOPARALLEL MONITORING'); -- 6.9.2007
 				ins_line(k_build,'/');
 			END IF;
 
 			whenever_sqlerror(k_build,FALSE);
-                        --5.5.2010 only if old table exists
+                        -- 5.5.2010 only if old table exists
 			IF p_tables.ora_table_name IS NOT NULL THEN
-				IF p_tables.organization = 'I' THEN --25.5.2011 alter old index and contraint on IOT
+				IF p_tables.organization = 'I' THEN -- 25.5.2011 alter old index and contraint on IOT
 		                        ins_line(k_build,l_noalterprefix||'ALTER INDEX '||LOWER(l_schema||p_tables.table_name)
 					                          ||' RENAME TO old_'||LOWER(p_tables.recname)); 
 					ins_line(k_build,'/');
@@ -4431,14 +4440,14 @@ END split_tab_parts;
 					ins_line(k_build,'/');
 				END IF;
 	                        ins_line(k_build,l_noalterprefix||'ALTER TABLE '||LOWER(l_schema||p_tables.table_name)
-				                          ||' RENAME TO old_'||LOWER(p_tables.recname)); --6.9.2007
+				                          ||' RENAME TO old_'||LOWER(p_tables.recname)); -- 6.9.2007
 
 				ins_line(k_build,'/');
                         	ins_line(k_build,'');
 			END IF;
 
 			whenever_sqlerror(k_build,TRUE);
-			IF p_tables.organization = 'I' THEN --25.5.2011 add organisation here if IOT
+			IF p_tables.organization = 'I' THEN -- 25.5.2011 add organisation here if IOT
 		                        ins_line(k_build,l_noalterprefix||'ALTER INDEX '||LOWER(l_schema||'gfc_'||p_tables.recname)
 					                           ||' RENAME TO '||LOWER(p_tables.table_name)); 
 					ins_line(k_build,'/');
@@ -4448,7 +4457,7 @@ END split_tab_parts;
 					ins_line(k_build,'/');
 			END IF;
                         ins_line(k_build,l_noalterprefix||'ALTER TABLE '||LOWER(l_schema||'gfc_'||p_tables.recname)
-			                           ||' RENAME TO '||LOWER(p_tables.table_name)); --6.9.2007
+			                           ||' RENAME TO '||LOWER(p_tables.table_name)); -- 6.9.2007
 			ins_line(k_build,'/');
                         ins_line(k_build,'');
                         pause_sql(k_build);
@@ -4458,9 +4467,9 @@ END split_tab_parts;
 --                      ins_line(k_stats,LOWER('spool gfcstats_'||l_dbname||'_'||p_tables.recname||'.lst'));
                         signature(k_stats,FALSE,'gfcstats',p_tables.recname);
                         IF l_build_stats = 'Y' THEN
-                                l_counter := 0; /*do build stats command in table build script*/
+                                l_counter := 0; -- do build stats command in table build script
                         ELSE 
-                                l_counter := 2; /*don't build stats command in table build script*/
+                                l_counter := 2; -- do not  build stats command in table build script
                         END IF;
                         WHILE l_counter <= 2 LOOP
                                 ins_line(l_counter,'');
@@ -4474,9 +4483,9 @@ END split_tab_parts;
 	                                                IF p_tables.sample_size IS NULL THEN
         	                                                ins_line(l_counter,',estimate_percent=>DBMS_STATS.AUTO_SAMPLE_SIZE');
                 	                                ELSE
-                        	                                ins_line(l_counter,',estimate_percent=>'||p_tables.sample_size); --6.9.2007
+                        	                                ins_line(l_counter,',estimate_percent=>'||p_tables.sample_size); -- 6.9.2007
                                 	                END IF;
-                                        	        --30.10.2007: added method opt override
+                                        	        -- 30.10.2007: added method opt override
                                                 	ins_line(l_counter,',method_opt=>'''
 							        ||NVL(p_tables.method_opt,'FOR ALL COLUMNS SIZE AUTO')
 								||'''');
@@ -4491,7 +4500,7 @@ END split_tab_parts;
                         	                        ELSE
                                 	                        ins_line(l_counter,',estimate_percent=>'||p_tables.sample_size);
                                         	        END IF;
-                                                	--30.10.2007: added method opt override
+                                                	-- 30.10.2007: added method opt override
 	                                                ins_line(l_counter,',method_opt=>'''
         	                                                 ||NVL(p_tables.method_opt,'FOR ALL INDEXED COLUMNS SIZE 1')||'''');
                 	                        END IF;
@@ -4512,7 +4521,7 @@ END split_tab_parts;
 	                                        ins_line(l_counter,',cascade=>TRUE);');
         	                                ins_line(l_counter,'END;');
                 	                        ins_line(l_counter,'/');
-                        	        ELSE /*use analyze on 8.1.7.2*/
+                        	        ELSE -- use analyze on 8.1.7.2
                  	        	        ins_line(l_counter,'ANALYZE TABLE '||l_schema1||'.'
 						                           ||LOWER(p_tables.table_name)	
 						                           ||' ESTIMATE STATISTICS SAMPLE 1 PERCENT;');
@@ -4538,36 +4547,36 @@ END split_tab_parts;
                                 l_counter := l_counter + 2;
                         END LOOP;
                         pause_sql(k_build);
-                        whenever_sqlerror(k_build,FALSE); --6.9.2007
+                        whenever_sqlerror(k_build,FALSE); -- 6.9.2007
                         ins_line(k_build,l_noalterprefix||'DROP TABLE ' 
 			                          ||LOWER(l_schema||'old_'||p_tables.recname)
-                                                  ||l_drop_purge_suffix); --6.9.2007
+                                                  ||l_drop_purge_suffix); -- 6.9.2007
 			ins_line(k_build,'/');
                         ins_line(k_build,'');
-                        ddlpermit(k_build,FALSE); --added 10.10.2007
-                        ins_line(k_build,'DROP TRIGGER '||LOWER(l_schema||p_tables.recname)||'_nochange'); --6.9.2007
+                        ddlpermit(k_build,FALSE); -- added 10.10.2007
+                        ins_line(k_build,'DROP TRIGGER '||LOWER(l_schema||p_tables.recname)||'_nochange'); -- 6.9.2007
 			ins_line(k_build,'/');
                         ins_line(k_build,'');
 
-                        --12.2.2008 append/split missing partitions - but what about indexes
+                        -- 12.2.2008 append/split missing partitions - but what about indexes
 			IF p_tables.part_type IN('R','L') THEN
         	                whenever_sqlerror(k_alter,TRUE);
 				ddlpermit(k_alter,TRUE); 
 	                        ins_line(k_alter,'');
 
-                                --add new range partitions where it is simply
+                                -- add new range partitions where it is simply
 				add_tab_parts(k_alter, p_tables.recname, l_schema1, p_tables.table_name, 
 			                      p_tables.part_id, p_tables.part_type, 
 				              p_tables.subpart_type, p_tables.hash_partitions, 
 				              'N', p_tables.recname);
 
-                                --add new range partitions by splitting-11.3.2013 adjusted to omit maxvalue partition
+                                -- add new range partitions by splitting-11.3.2013 adjusted to omit maxvalue partition
 				split_tab_parts(k_alter, p_tables.recname, l_schema1, p_tables.table_name, 
 			                      p_tables.part_id, p_tables.part_type, 
 				              p_tables.subpart_type, p_tables.hash_partitions, 
 				              'N', p_tables.recname);
 
-                                IF l_repopnewmax = 'Y' AND p_tables.subpart_type = 'N' THEN --added 11.3.2013
+                                IF l_repopnewmax = 'Y' AND p_tables.subpart_type = 'N' THEN -- added 11.3.2013
                                   add_tab_parts_newmax(k_alter, p_tables.recname, l_schema1, p_tables.table_name, 
 			                      p_tables.part_id, p_tables.part_type, 
 				              p_tables.subpart_type, p_tables.hash_partitions, 
@@ -4585,25 +4594,25 @@ END split_tab_parts;
 	                        ins_line(k_alter,'');
 			END IF;
 
-			--5.5.2010-only query source table if it exists                        
------------------------------------------------------------------------------------------------------------
---13.3.2013--remved this block of code because it is a dup of something above that should not have been copied here
---22.3.2013--put it back because need it at Hays
------------------------------------------------------------------------------------------------------------
+			-- 5.5.2010-only query source table if it exists                        
+-------------------------------------------------------------------------------------------------------
+-- 13.3.2013-- remved this block of code because it is a dup of something above that should not have been copied here
+-- 22.3.2013-- put it back because need it at Hays
+-------------------------------------------------------------------------------------------------------
 			IF p_tables.src_table_name IS NOT NULL THEN
 
-	                        ins_line(k_alter,l_sess_para); --added 1.11.2012
+	                        ins_line(k_alter,l_sess_para); -- added 1.11.2012
 				ins_line(k_alter,'/');
 	              	        ins_line(k_alter,'');
 
-	                        ins_line(k_alter,'BEGIN'); /*1.10.2010 insert in PL/SQL block*/
-	                        ins_line(k_alter,'INSERT /*'||l_hint||'*/ INTO '
-                                                       ||LOWER(l_schema||'ps_'||p_tables.recname)||' t ('); --19.4.2013 insert into PS not GFC
+	                        ins_line(k_alter,'BEGIN'); -- 1.10.2010 insert in PL/SQL block
+	                        ins_line(k_alter,'INSERT --'||l_hint||'*/ INTO '
+                                                       ||LOWER(l_schema||'ps_'||p_tables.recname)||' t ('); -- 19.4.2013 insert into PS not GFC
 	                        tab_col_list(k_alter,p_tables.recname,p_column_name=>TRUE);
 	                        ins_line(k_alter,') SELECT '||l_hint2);
 	                        tab_col_list(k_alter,p_tables.recname,p_tables.src_table_name,p_column_name=>FALSE);
 
-				--20.10.2008 - added criteria option
+				-- 20.10.2008 - added criteria option
 				IF p_tables.criteria IS NOT NULL THEN
 					ins_line(k_alter,'FROM '||LOWER(l_schema||p_tables.src_table_name)||' s');
 		                        ins_line(k_alter,p_tables.criteria||';');
@@ -4616,7 +4625,7 @@ END split_tab_parts;
 	                        ins_line(k_alter,'');
                         	pause_sql(k_alter);
 			END IF;
------------------------------------------------------------------------------------------------------------
+-------------------------------------------------------------------------------------------------------
                         ins_line(k_build,'spool off');
                         ins_line(k_stats,'spool off');
                         ins_line(k_alter,'spool off');
@@ -4624,11 +4633,10 @@ END split_tab_parts;
 
                 END LOOP;
 		unset_action(p_action_name=>l_action);
-        END part_tables;
-
------------------------------------------------------------------------------------------------------------
---process archive partitioned tables
------------------------------------------------------------------------------------------------------------
+END part_tables;
+-------------------------------------------------------------------------------------------------------
+-- process archive partitioned tables
+-------------------------------------------------------------------------------------------------------
 PROCEDURE arch_tables
 (p_part_id VARCHAR2 DEFAULT ''
 ,p_recname VARCHAR2 DEFAULT '') IS
@@ -4681,7 +4689,7 @@ BEGIN
     l_arch_schema     := COALESCE(p_tables.arch_schema,p_tables.override_schema,l_schema1);
     l_arch_table_name := COALESCE(p_tables.arch_table_name,p_tables.arch_sqltablename,p_tables.table_name);
 
-	    --11.2.2013 if table is only deleted but has a noarch condition then we need an exchange table
+	    -- 11.2.2013 if table is only deleted but has a noarch condition then we need an exchange table
     IF p_tables.arch_flag = 'A' OR (p_tables.arch_flag = 'D' AND p_tables.noarch_condition IS NOT NULL) THEN
 
 --    ins_line(k_arch1,'set echo on pause off verify on feedback on timi on autotrace off pause off lines 100');
@@ -4690,11 +4698,11 @@ BEGIN
       ins_line(k_arch1,'rem Partitioning Scheme '||p_tables.part_id);
       whenever_sqlerror(k_arch1,FALSE);
 
-      --create the exchange table
+      -- create the exchange table
       ins_line(k_arch1,'CREATE TABLE '||LOWER(l_arch_schema||'.XCHG_'||p_tables.recname));
       tab_cols(k_arch1,p_tables.recname,l_longtoclob,p_tables.organization,'arch_');
 
-      IF p_tables.organization = 'I' THEN --25.5.2011 add organisation here if IOT
+      IF p_tables.organization = 'I' THEN -- 25.5.2011 add organisation here if IOT
         ins_line(k_arch1,'ORGANIZATION INDEX');
       END IF;
 
@@ -4702,17 +4710,17 @@ BEGIN
         ins_line(k_arch1,'TABLESPACE '||p_tables.tab_tablespace);
       END IF;
 
-      IF p_tables.organization = 'I' THEN --use index storage for IOT
+      IF p_tables.organization = 'I' THEN -- use index storage for IOT
         IF p_tables.idx_storage IS NOT NULL THEN
-          ins_line(k_arch1,idx_storage(p_tables.recname, '_', p_tables.idx_storage)); --25.5.2011
+          ins_line(k_arch1,idx_storage(p_tables.recname, '_', p_tables.idx_storage)); -- 25.5.2011
         END IF;
       ELSE 
         IF p_tables.tab_storage IS NOT NULL THEN
-          ins_line(k_arch1,tab_storage(p_tables.recname, p_tables.tab_storage)); --6.9.2007
+          ins_line(k_arch1,tab_storage(p_tables.recname, p_tables.tab_storage)); -- 6.9.2007
         END IF;
       END IF;
 
-      ins_line(k_arch1,'LOGGING NOPARALLEL'); --always no parallel because we are going to partition exchange
+      ins_line(k_arch1,'LOGGING NOPARALLEL'); -- always no parallel because we are going to partition exchange
       ins_line(k_arch1,'/');
       ins_line(k_arch1,'');
 
@@ -4723,13 +4731,13 @@ BEGIN
       mk_arch_indexes(k_arch1,p_tables.recname, l_arch_schema, 'XCHG_'||p_tables.recname, NULL, 'XCHG'); 
     END IF;
 
-    --if archive flag then create partitioned archive table
+    -- if archive flag then create partitioned archive table
     IF p_tables.arch_flag = 'A' THEN
-      --create the partitioned archive table
+      -- create the partitioned archive table
       ins_line(k_arch1,'CREATE TABLE '||LOWER(l_arch_schema||'.'||l_arch_table_name));
       tab_cols(k_arch1,p_tables.recname,l_longtoclob,p_tables.organization,'arch_');
 
-      IF p_tables.organization = 'I' THEN --25.5.2011 add organisation here if IOT
+      IF p_tables.organization = 'I' THEN -- 25.5.2011 add organisation here if IOT
         ins_line(k_arch1,'ORGANIZATION INDEX');
       END IF;
 
@@ -4737,20 +4745,20 @@ BEGIN
         ins_line(k_arch1,'TABLESPACE '||p_tables.tab_tablespace);
       END IF;
 
-      IF p_tables.organization = 'I' THEN --use index storage for IOT
+      IF p_tables.organization = 'I' THEN -- use index storage for IOT
         IF p_tables.idx_storage IS NOT NULL THEN
-          ins_line(k_arch1,idx_storage(p_tables.recname, '_', p_tables.idx_storage)); --25.5.2011
+          ins_line(k_arch1,idx_storage(p_tables.recname, '_', p_tables.idx_storage)); -- 25.5.2011
         END IF;
       ELSE 
         IF p_tables.tab_storage IS NOT NULL THEN
-          ins_line(k_arch1,tab_storage(p_tables.recname, p_tables.tab_storage)); --6.9.2007
+          ins_line(k_arch1,tab_storage(p_tables.recname, p_tables.tab_storage)); -- 6.9.2007
         END IF;
       END IF;
 
       IF p_tables.part_type = 'R' THEN
         ins_line(k_arch1,'PARTITION BY RANGE('||p_tables.part_column||')');
         IF p_tables.organization = 'I' THEN
-          NULL; --25.5.2011 can't subpartition IOTs
+          NULL; -- 25.5.2011 cannot subpartition IOTs
         ELSIF p_tables.subpart_type = 'H' AND 
           p_tables.hash_partitions > 1 AND 
           p_tables.subpart_column IS NOT NULL THEN
@@ -4780,15 +4788,15 @@ BEGIN
       END IF;
 
       ins_line(k_arch1,'ENABLE ROW MOVEMENT');
-      ins_line(k_arch1,'LOGGING NOPARALLEL'); --always no parallel because we are going to partition exchange
+      ins_line(k_arch1,'LOGGING NOPARALLEL'); -- always no parallel because we are going to partition exchange
       ins_line(k_arch1,'/');
       ins_line(k_arch1,'');
 
       ins_line(k_arch1,'GRANT SELECT ON '||LOWER(l_arch_schema||'.'||l_arch_table_name)||' TO '||LOWER(l_schema1));
       ins_line(k_arch1,'/');
 
-      --added 18.10.2012, removed 30.10.2012
-      --ins_line(k_arch1,'GRANT ALTER ON '||LOWER(l_arch_schema||'.'||l_arch_table_name)||' TO '||LOWER(l_schema1));
+      -- added 18.10.2012, removed 30.10.2012
+      -- ins_line(k_arch1,'GRANT ALTER ON '||LOWER(l_arch_schema||'.'||l_arch_table_name)||' TO '||LOWER(l_schema1));
       ins_line(k_arch1,'');
 
       mk_arch_indexes(k_arch1,p_tables.recname, l_arch_schema, l_arch_table_name, 
@@ -4821,23 +4829,23 @@ BEGIN
 
     IF l_schema1 != l_arch_schema THEN
 
-      --grants required to enable PSARCH to do exchange
-      --ins_line(k_arch2,'set echo on pause off verify on feedback on timi on autotrace off pause off lines 100');
-      --ins_line(k_arch2,LOWER('spool gfcarch2_'||l_dbname||'_'||p_tables.recname||'.lst'));
+      -- grants required to enable PSARCH to do exchange
+      -- ins_line(k_arch2,'set echo on pause off verify on feedback on timi on autotrace off pause off lines 100');
+      -- ins_line(k_arch2,LOWER('spool gfcarch2_'||l_dbname||'_'||p_tables.recname||'.lst'));
 
       signature(k_arch2,FALSE,'gfcarch2',p_tables.recname);
       ins_line(k_arch2,'rem Partitioning Scheme '||p_tables.part_id);
 
-      --grant select, alter on base table to archive schema
+      -- grant select, alter on base table to archive schema
       ins_line(k_arch2,'GRANT SELECT, ALTER ON '||l_schema2||p_tables.base_sqltablename||' TO '||LOWER(l_arch_schema));
       ins_line(k_arch2,'/');
 
-      IF p_tables.noarch_condition IS NOT NULL OR p_tables.arch_flag = 'D' THEN --8.5.2013 insert priv required for exchange
-        --grant insert on base table to archive schema if there is a no archive condition
+      IF p_tables.noarch_condition IS NOT NULL OR p_tables.arch_flag = 'D' THEN -- 8.5.2013 insert priv required for exchange
+        -- grant insert on base table to archive schema if there is a no archive condition
         ins_line(k_arch2,'GRANT INSERT ON '||l_schema2||p_tables.base_sqltablename||' TO '||LOWER(l_arch_schema));
         ins_line(k_arch2,'/');
         ins_line(k_arch2,'');
-        --grant insert on base table to archive schema if preserve clause 
+        -- grant insert on base table to archive schema if preserve clause 
       END IF;
       ins_line(k_arch2,'spool off');
     END IF;
@@ -4846,9 +4854,9 @@ BEGIN
   unset_action(p_action_name=>l_action);
 END arch_tables;
 
------------------------------------------------------------------------------------------------------------
---process global temp tables
------------------------------------------------------------------------------------------------------------
+-------------------------------------------------------------------------------------------------------
+-- process global temp tables
+-------------------------------------------------------------------------------------------------------
 PROCEDURE temp_tables  
 (p_recname VARCHAR2 DEFAULT ''
 ) IS
@@ -4865,9 +4873,9 @@ BEGIN
   debug_msg('TEMP_TABLES:recname='||p_recname);
 
   IF l_build_stats = 'N' AND l_deletetempstats = 'Y' THEN
-    l_counter_start := 2; /*don't build stats command in table build script*/
+    l_counter_start := 2; -- do not  build stats command in table build script
   ELSE 
-    l_counter_start := 0; /*do build stats command in table build script*/
+    l_counter_start := 0; -- do build stats command in table build script
   END IF;
 
   FOR p_tables IN(
@@ -4881,7 +4889,7 @@ BEGIN
 --  ins_line(k_build,LOWER('spool '||LOWER(l_scriptid)||'_'||l_dbname||'_'||p_tables.recname||'.lst'));
     signature(k_build,FALSE,l_scriptid,p_tables.recname);
 
-    ddlpermit(k_build,TRUE); --added 29.10.2007
+    ddlpermit(k_build,TRUE); -- added 29.10.2007
 
 --  ins_line(k_index,'set echo on pause off verify on feedback on timi on autotrace off pause off lines 100');
 --  ins_line(k_index,LOWER('spool gfcindex_'||l_dbname||'_'||p_tables.recname||'.lst'));
@@ -4891,7 +4899,7 @@ BEGIN
 
       	                        IF l_tempinstance > 0 THEN
         	                        l_suffix := LTRIM(TO_CHAR(l_tempinstance,'999'));
-	                               	whenever_sqlerror(k_build,FALSE); --ignore drop error 
+	                               	whenever_sqlerror(k_build,FALSE); -- ignore drop error 
                                 ELSE
                                         l_suffix := '';
                                 END IF;
@@ -4940,7 +4948,7 @@ BEGIN
 				END IF;
 	                        pause_sql(k_build);
     END LOOP;
-    ddlpermit(k_build,FALSE); --added 29.10.2007
+    ddlpermit(k_build,FALSE); -- added 29.10.2007
 
     l_counter := l_counter_start;
 
@@ -4958,15 +4966,14 @@ BEGIN
 END temp_tables;
 
 ---------------------------------------------------------------
-	PROCEDURE exec_sql
-	(p_sql VARCHAR2
-	) IS
-	BEGIN
-		EXECUTE IMMEDIATE p_sql;
-	END;
-	
+PROCEDURE exec_sql
+(p_sql VARCHAR2
+) IS
+BEGIN
+  EXECUTE IMMEDIATE p_sql;
+END exec_sql;
 ---------------------------------------------------------------
---drop named table
+-- drop named table
 	PROCEDURE drop_table
 	(p_table_name VARCHAR2
 	) IS
@@ -4986,7 +4993,7 @@ END temp_tables;
 	END drop_table;
 
 ---------------------------------------------------------------
---gfc_ps_tab_columns holds a list of columns for tables to be recreated.   Any sub-records will be expanded recursively
+-- gfc_ps_tab_columns holds a list of columns for tables to be recreated.   Any sub-records will be expanded recursively
 	PROCEDURE ddl_gfc_ps_tab_columns
 	(p_gtt BOOLEAN DEFAULT FALSE) 
 	IS
@@ -5015,7 +5022,7 @@ END temp_tables;
 	END;
 
 ---------------------------------------------------------------
---gfc_ora_tab_columns
+-- gfc_ora_tab_columns
 	PROCEDURE ddl_gfc_ora_tab_columns
 	(p_gtt BOOLEAN DEFAULT FALSE) 
 	IS
@@ -5043,7 +5050,7 @@ END temp_tables;
 	END;
 
 ---------------------------------------------------------------
---to hold override parameters for function based indexes specified in partdata - 19.10.2007
+-- to hold override parameters for function based indexes specified in partdata - 19.10.2007
 	PROCEDURE ddl_gfc_ps_idxddlparm
 	(p_gtt BOOLEAN DEFAULT FALSE) 
 	IS
@@ -5086,10 +5093,10 @@ END temp_tables;
 			l_sql := l_sql||' GLOBAL TEMPORARY';
 		END IF;
 		l_sql := l_sql||l_lf||'TABLE gfc_part_ranges';
-		l_sql := l_sql||l_lf||'(part_id        VARCHAR2(8 CHAR) NOT NULL'; --ID of partitioning schema
-		l_sql := l_sql||l_lf||',part_no        NUMBER NOT NULL'; --sequence number of range
-		l_sql := l_sql||l_lf||',part_name      VARCHAR2(30 CHAR) NOT NULL'; --this goes into the partition names
-		l_sql := l_sql||l_lf||',part_value     VARCHAR2(100 CHAR) NOT NULL'; --range less than value
+		l_sql := l_sql||l_lf||'(part_id        VARCHAR2(8 CHAR) NOT NULL'; -- iD of partitioning schema
+		l_sql := l_sql||l_lf||',part_no        NUMBER NOT NULL'; -- sequence number of range
+		l_sql := l_sql||l_lf||',part_name      VARCHAR2(30 CHAR) NOT NULL'; -- this goes into the partition names
+		l_sql := l_sql||l_lf||',part_value     VARCHAR2(100 CHAR) NOT NULL'; -- range less than value
 		l_sql := l_sql||l_lf||',tab_tablespace VARCHAR2(30 CHAR)';
 		l_sql := l_sql||l_lf||',idx_tablespace VARCHAR2(30 CHAR)';
 		l_sql := l_sql||l_lf||',tab_storage    VARCHAR2(100 CHAR)';
@@ -5103,7 +5110,7 @@ END temp_tables;
 	END;
 
 ---------------------------------------------------------------
---gfc_ps_tables holds the records for which DDL scripts are to be regeneated by this script
+-- gfc_ps_tables holds the records for which DDL scripts are to be regeneated by this script
 	PROCEDURE ddl_gfc_ps_tables
 	(p_gtt BOOLEAN DEFAULT FALSE) 
 	IS
@@ -5135,7 +5142,7 @@ END temp_tables;
 	END;
 
 ---------------------------------------------------------------
---gfc_ps_indexdefn - expanded version of psindexdefn
+-- gfc_ps_indexdefn - expanded version of psindexdefn
 	PROCEDURE ddl_gfc_ps_indexdefn
 	(p_gtt BOOLEAN DEFAULT FALSE) 
 	IS
@@ -5156,8 +5163,8 @@ END temp_tables;
 		l_sql := l_sql||l_lf||',subrecname   VARCHAR2(15 CHAR) NOT NULL';
 		l_sql := l_sql||l_lf||',subindexid   VARCHAR2(1 CHAR) NOT NULL';
 		l_sql := l_sql||l_lf||',platform_ora NUMBER NOT NULL';
-		l_sql := l_sql||l_lf||',custkeyorder NUMBER NOT NULL'; --6.9.2007
-		l_sql := l_sql||l_lf||',uniqueflag   NUMBER NOT NULL'; --6.9.2007    
+		l_sql := l_sql||l_lf||',custkeyorder NUMBER NOT NULL'; -- 6.9.2007
+		l_sql := l_sql||l_lf||',uniqueflag   NUMBER NOT NULL'; -- 6.9.2007    
 		l_sql := l_sql||l_lf||',CONSTRAINT gfc_ps_indexdefn PRIMARY KEY(recname, indexid)';
 		l_sql := l_sql||l_lf||',CONSTRAINT gfc_ps_indexdefn2 UNIQUE(subrecname, subindexid)';
 		l_sql := l_sql||l_lf||')';
@@ -5167,7 +5174,7 @@ END temp_tables;
 	END;
 
 ---------------------------------------------------------------
---gfc_ps_keydefn - expanded version of pskeydefn
+-- gfc_ps_keydefn - expanded version of pskeydefn
 	PROCEDURE ddl_gfc_ps_keydefn
 	(p_gtt BOOLEAN DEFAULT FALSE) 
 	IS
@@ -5186,7 +5193,7 @@ END temp_tables;
 		l_sql := l_sql||l_lf||'(recname   VARCHAR2(15 CHAR) NOT NULL';
 		l_sql := l_sql||l_lf||',indexid   VARCHAR2(1 CHAR) NOT NULL';
 		l_sql := l_sql||l_lf||',keyposn   NUMBER NOT NULL';
-		l_sql := l_sql||l_lf||',fieldname VARCHAR2(100 CHAR) NOT NULL'; --6.9.2007
+		l_sql := l_sql||l_lf||',fieldname VARCHAR2(100 CHAR) NOT NULL'; -- 6.9.2007
 		l_sql := l_sql||l_lf||',ascdesc   NUMBER NOT NULL';
 		l_sql := l_sql||l_lf||',CONSTRAINT gfc_ps_keydefn PRIMARY KEY(recname,indexid,keyposn)';
 		l_sql := l_sql||l_lf||',CONSTRAINT gfc_ps_keydefn2 UNIQUE(recname,indexid,fieldname)';
@@ -5212,15 +5219,15 @@ END temp_tables;
 			l_sql := l_sql||' GLOBAL TEMPORARY';
 		END IF;
 		l_sql := l_sql||l_lf||'TABLE gfc_part_tables';
-		l_sql := l_sql||l_lf||'(recname         VARCHAR2(30 CHAR) NOT NULL'; --peoplesoft record name
-		l_sql := l_sql||l_lf||',part_id         VARCHAR2(8 CHAR) NOT NULL'; --ID of partitioning strategy.  Many tables can share one 
-		l_sql := l_sql||l_lf||',part_column     VARCHAR2(100 CHAR) NOT NULL'; --range partitioning column, or comma separated columns
-		l_sql := l_sql||l_lf||',part_type       VARCHAR2(1 CHAR) NOT NULL'; --(R)ange or (L)ist or (H)ash only 
+		l_sql := l_sql||l_lf||'(recname         VARCHAR2(30 CHAR) NOT NULL'; -- peoplesoft record name
+		l_sql := l_sql||l_lf||',part_id         VARCHAR2(8 CHAR) NOT NULL'; -- iD of partitioning strategy.  Many tables can share one 
+		l_sql := l_sql||l_lf||',part_column     VARCHAR2(100 CHAR) NOT NULL'; -- range partitioning column, or comma separated columns
+		l_sql := l_sql||l_lf||',part_type       VARCHAR2(1 CHAR) NOT NULL'; -- (R)ange or (L)ist or (H)ash only 
 		l_sql := l_sql||l_lf||' CONSTRAINT tables_part_type CHECK (part_type IN(''R'',''L'',''H''))';
-		l_sql := l_sql||l_lf||',subpart_type    VARCHAR2(1 CHAR) 	DEFAULT ''N'''; --(L)ist or (H)ash only 
+		l_sql := l_sql||l_lf||',subpart_type    VARCHAR2(1 CHAR) 	DEFAULT ''N'''; -- (L)ist or (H)ash only 
 		l_sql := l_sql||l_lf||' CONSTRAINT tables_subpart_type CHECK (subpart_type IN(''L'',''H'',''N''))';
-		l_sql := l_sql||l_lf||',subpart_column  VARCHAR2(100 CHAR)'; --sub partitioning column
-		l_sql := l_sql||l_lf||',hash_partitions NUMBER DEFAULT 0 NOT NULL'; --number of hash partitions
+		l_sql := l_sql||l_lf||',subpart_column  VARCHAR2(100 CHAR)'; -- sub partitioning column
+		l_sql := l_sql||l_lf||',hash_partitions NUMBER DEFAULT 0 NOT NULL'; -- number of hash partitions
 		l_sql := l_sql||l_lf||' CONSTRAINT tables_hash_partitions_pos CHECK(hash_partitions>=0)';
 		l_sql := l_sql||l_lf||',tab_tablespace  VARCHAR2(30 CHAR)';
 		l_sql := l_sql||l_lf||',idx_tablespace  VARCHAR2(30 CHAR)';
@@ -5228,7 +5235,7 @@ END temp_tables;
 		l_sql := l_sql||l_lf||',idx_storage     VARCHAR2(100 CHAR)';
 		l_sql := l_sql||l_lf||',stats_type	VARCHAR2(1 CHAR) DEFAULT ''Y''';
 		l_sql := l_sql||l_lf||' CONSTRAINT tables_stats_type CHECK (stats_type IN(''Y'',''N'',''D''))';
-		l_sql := l_sql||l_lf||',sample_size     NUMBER'; --analyze sample size : null means auto sample size
+		l_sql := l_sql||l_lf||',sample_size     NUMBER'; -- analyze sample size : null means auto sample size
 		l_sql := l_sql||l_lf||',method_opt      VARCHAR2(100 CHAR)'; --override statistics clause in gather_table_stats
 		l_sql := l_sql||l_lf||',override_schema VARCHAR2(30 CHAR)';
 		l_sql := l_sql||l_lf||',CONSTRAINT gfc_part_tables PRIMARY KEY(recname)';
@@ -5258,16 +5265,16 @@ END temp_tables;
 			l_sql := l_sql||' GLOBAL TEMPORARY';
 		END IF;
 		l_sql := l_sql||l_lf||'TABLE gfc_part_indexes';
-		l_sql := l_sql||l_lf||'(recname         VARCHAR2(30 CHAR) NOT NULL'; --peoplesoft record name
-		l_sql := l_sql||l_lf||',indexid         VARCHAR2(1 CHAR) NOT NULL'; --peoplesoft index id
-		l_sql := l_sql||l_lf||',part_id         VARCHAR2(8 CHAR) NOT NULL'; --ID of partitioning strategy.
-		l_sql := l_sql||l_lf||',part_column     VARCHAR2(100 CHAR) NOT NULL'; --range partitioning column, or comma separated columns
-		l_sql := l_sql||l_lf||',part_type       VARCHAR2(1 CHAR) NOT NULL'; --(R)ange or (L)ist or (H)ash only 
+		l_sql := l_sql||l_lf||'(recname         VARCHAR2(30 CHAR) NOT NULL'; -- peoplesoft record name
+		l_sql := l_sql||l_lf||',indexid         VARCHAR2(1 CHAR) NOT NULL'; -- peoplesoft index id
+		l_sql := l_sql||l_lf||',part_id         VARCHAR2(8 CHAR) NOT NULL'; -- iD of partitioning strategy.
+		l_sql := l_sql||l_lf||',part_column     VARCHAR2(100 CHAR) NOT NULL'; -- range partitioning column, or comma separated columns
+		l_sql := l_sql||l_lf||',part_type       VARCHAR2(1 CHAR) NOT NULL'; -- (R)ange or (L)ist or (H)ash only 
 		l_sql := l_sql||       ' CONSTRAINT index_part_type CHECK (part_type IN(''R'',''L'',''H''))';
-		l_sql := l_sql||l_lf||',subpart_type    VARCHAR2(1 CHAR) DEFAULT ''N'''; --(L)ist or (H)ash only 
+		l_sql := l_sql||l_lf||',subpart_type    VARCHAR2(1 CHAR) DEFAULT ''N'''; -- (L)ist or (H)ash only 
 		l_sql := l_sql||       ' CONSTRAINT index_subpart_type CHECK (subpart_type IN(''L'',''H'',''N''))';
-		l_sql := l_sql||l_lf||',subpart_column  VARCHAR2(100 CHAR)'; --sub partitioning column
-		l_sql := l_sql||l_lf||',hash_partitions NUMBER'; --number of hash partitions
+		l_sql := l_sql||l_lf||',subpart_column  VARCHAR2(100 CHAR)'; -- sub partitioning column
+		l_sql := l_sql||l_lf||',hash_partitions NUMBER'; -- number of hash partitions
 		l_sql := l_sql||       ' CONSTRAINT indexes_hash_partitions_pos CHECK(hash_partitions>=0)';
 		l_sql := l_sql||l_lf||',idx_tablespace  VARCHAR2(30 CHAR)';
 		l_sql := l_sql||l_lf||',idx_storage     VARCHAR2(100 CHAR)';
@@ -5295,10 +5302,10 @@ END temp_tables;
 			l_sql := l_sql||' GLOBAL TEMPORARY';
 		END IF;
 		l_sql := l_sql||l_lf||'TABLE gfc_part_lists';
-		l_sql := l_sql||l_lf||'(part_id         VARCHAR2(8 CHAR) NOT NULL'; --ID of partitioning schema
-		l_sql := l_sql||l_lf||',part_no         NUMBER NOT NULL'; --sequence number of range
-		l_sql := l_sql||l_lf||',part_name       VARCHAR2(30 CHAR) NOT NULL'; --this goes into the partition names
-		l_sql := l_sql||l_lf||',list_value      VARCHAR2(1000) NOT NULL'; --list value
+		l_sql := l_sql||l_lf||'(part_id         VARCHAR2(8 CHAR) NOT NULL'; -- iD of partitioning schema
+		l_sql := l_sql||l_lf||',part_no         NUMBER NOT NULL'; -- sequence number of range
+		l_sql := l_sql||l_lf||',part_name       VARCHAR2(30 CHAR) NOT NULL'; -- this goes into the partition names
+		l_sql := l_sql||l_lf||',list_value      VARCHAR2(1000) NOT NULL'; -- list value
 		l_sql := l_sql||l_lf||',tab_tablespace  VARCHAR2(30 CHAR)';
 		l_sql := l_sql||l_lf||',idx_tablespace  VARCHAR2(30 CHAR)';
 		l_sql := l_sql||l_lf||',tab_storage     VARCHAR2(100 CHAR)';
@@ -5327,9 +5334,9 @@ END temp_tables;
 			l_sql := l_sql||' GLOBAL TEMPORARY';
 		END IF;
 		l_sql := l_sql||l_lf||'TABLE gfc_part_range_lists';
-		l_sql := l_sql||l_lf||'(part_id         VARCHAR2(8 CHAR) NOT NULL'; --ID of partitioning schema
-		l_sql := l_sql||l_lf||',range_name      VARCHAR2(30 CHAR) NOT NULL'; --this goes into the partition names
-		l_sql := l_sql||l_lf||',list_name       VARCHAR2(30 CHAR) NOT NULL'; --this goes into the partition names
+		l_sql := l_sql||l_lf||'(part_id         VARCHAR2(8 CHAR) NOT NULL'; -- iD of partitioning schema
+		l_sql := l_sql||l_lf||',range_name      VARCHAR2(30 CHAR) NOT NULL'; -- this goes into the partition names
+		l_sql := l_sql||l_lf||',list_name       VARCHAR2(30 CHAR) NOT NULL'; -- this goes into the partition names
 		l_sql := l_sql||l_lf||',build           VARCHAR2(1 CHAR) DEFAULT ''Y'' NOT NULL';
 		l_sql := l_sql||l_lf||' CONSTRAINT gfc_part_range_lists_build CHECK (build IN(''Y'',''N''))';
 		l_sql := l_sql||l_lf||',CONSTRAINT gfc_part_range_Lists PRIMARY KEY(part_id, range_name, list_name)';
@@ -5355,7 +5362,7 @@ END temp_tables;
 			l_sql := l_sql||' GLOBAL TEMPORARY';
 		END IF;
 		l_sql := l_sql||l_lf||'TABLE gfc_temp_tables';
-		l_sql := l_sql||l_lf||'(recname VARCHAR2(30 CHAR) NOT NULL'; --peoplesoft record name
+		l_sql := l_sql||l_lf||'(recname VARCHAR2(30 CHAR) NOT NULL'; -- peoplesoft record name
 		l_sql := l_sql||l_lf||',CONSTRAINT gfc_temp_tables PRIMARY KEY(recname)';
 		l_sql := l_sql||l_lf||')';
 		exec_sql(l_sql);
@@ -5409,14 +5416,14 @@ END temp_tables;
 		l_sql := l_sql||l_lf||        ',MOD(FLOOR(useedit/64),2) ascdesc';
 		l_sql := l_sql||l_lf||'FROM     gfc_ps_tab_columns c';
 		l_sql := l_sql||l_lf||'WHERE    MOD(FLOOR(useedit/16),2) = 1';
---AND    RECNAME= 'JOB'
+-- aND    RECNAME= 'JOB'
 		exec_sql(l_sql);
 
 		unset_action(p_action_name=>l_action);
 	END;
 
 ---------------------------------------------------------------
---rem 11.2.2003 - view corrected to handled user indexes
+-- rem 11.2.2003 - view corrected to handled user indexes
 
 	PROCEDURE ddl_gfc_ps_keydefn_vw
 	IS
@@ -5431,14 +5438,14 @@ END temp_tables;
 		l_sql := l_sql||l_lf||'SELECT  j.recname, j.indexid';
 		l_sql := l_sql||l_lf||       ',RANK() OVER (PARTITION BY j.recname, j.indexid';
 		l_sql := l_sql||                          ' ORDER BY DECODE(j.custkeyorder,1,k.keyposn,c.fieldnum))';
-		l_sql := l_sql||                          ' as keyposn'; --6.9.2007
+		l_sql := l_sql||                          ' as keyposn'; -- 6.9.2007
 		l_sql := l_sql||l_lf||       ',k.fieldname';
 		l_sql := l_sql||l_lf||       ',c.fieldnum';
 		l_sql := l_sql||l_lf||       ',RANK() OVER (PARTITION BY j.recname, j.indexid';
 		l_sql := l_sql||                          ' ORDER BY c.fieldnum) as fieldposn';
 		l_sql := l_sql||l_lf||       ',k.ascdesc';
 		l_sql := l_sql||l_lf||'FROM    gfc_ps_indexdefn j';
-		l_sql := l_sql||l_lf||       ',gfc_ps_tab_columns c'; --6.9.2007 removed psindexdefn
+		l_sql := l_sql||l_lf||       ',gfc_ps_tab_columns c'; -- 6.9.2007 removed psindexdefn
 		l_sql := l_sql||l_lf||       ',pskeydefn k';
 		l_sql := l_sql||l_lf||'WHERE   j.indexid = ''_''';
 		l_sql := l_sql||l_lf||'AND     c.recname = j.recname';
@@ -5455,7 +5462,7 @@ END temp_tables;
 		l_sql := l_sql||                          ' ORDER BY c.fieldnum) as fieldposn';
 		l_sql := l_sql||l_lf||       ',k.ascdesc';
 		l_sql := l_sql||l_lf||'FROM    gfc_ps_indexdefn j';
-		l_sql := l_sql||l_lf||       ',gfc_ps_tab_columns c'; --6.9.2007 removed psindexdefn
+		l_sql := l_sql||l_lf||       ',gfc_ps_tab_columns c'; -- 6.9.2007 removed psindexdefn
 		l_sql := l_sql||l_lf||       ',pskeydefn k';
 		l_sql := l_sql||l_lf||'WHERE   j.indexid BETWEEN ''A'' AND ''Z''';
 		l_sql := l_sql||l_lf||'AND     c.recname = j.recname';
@@ -5469,12 +5476,12 @@ END temp_tables;
 	END;
 
 ------------------------------------------------------------------------------------------------------
---will make these public if I can disable syntax checking
+-- will make these public if I can disable syntax checking
 ------------------------------------------------------------------------------------------------------
 
------------------------------------------------------------------------------------------------------------
---Spool script
------------------------------------------------------------------------------------------------------------
+-------------------------------------------------------------------------------------------------------
+-- spool script
+-------------------------------------------------------------------------------------------------------
 FUNCTION spooler
 (p_type NUMBER DEFAULT 0) 
 RETURN outrecset PIPELINED IS 
@@ -5496,7 +5503,7 @@ BEGIN
   RETURN;
 END spooler;
 ---------------------------------------------------------------
---create all working storage tables
+-- create all working storage tables
 PROCEDURE create_tables
 (p_gtt BOOLEAN DEFAULT FALSE) 
 IS
@@ -5521,7 +5528,7 @@ BEGIN
 END create_tables;
 
 ---------------------------------------------------------------
---drop named table
+-- drop named table
 PROCEDURE drop_tables IS
 BEGIN
   read_context;
@@ -5543,7 +5550,7 @@ BEGIN
 END drop_tables;
 
 ------------------------------------------------------------------------------------------------------
---public procedures and functions
+-- public procedures and functions
 ------------------------------------------------------------------------------------------------------
 PROCEDURE banner IS
   l_module VARCHAR2(48);
@@ -5561,7 +5568,8 @@ BEGIN
 END;
 
 ------------------------------------------------------------------------------------------------------
---read defaults from contexts
+-- read defaults from contexts
+------------------------------------------------------------------------------------------------------
 PROCEDURE display_defaults IS
   l_module VARCHAR2(48);
   l_action VARCHAR2(32);
@@ -5588,11 +5596,11 @@ BEGIN
   sys.dbms_output.put_line('Analyze table immediately after rebuild: '||l_build_stats);
   sys.dbms_output.put_line('Delete and lock statistics on GTTs     : '||l_deletetempstats);
   sys.dbms_output.put_line('Force LONGs to CLOBs                   : '||l_longtoclob);
---sys.dbms_output.put_line('Name of DDL trigger to disable on build: '||l_ddltrigger);
+-- sys.dbms_output.put_line('Name of DDL trigger to disable on build: '||l_ddltrigger);
   sys.dbms_output.put_line('Command to enable DDL lock trigger     : '||l_ddlenable);
   sys.dbms_output.put_line('Command to disable DDL lock trigger    : '||l_ddldisable);
   sys.dbms_output.put_line('Drop tables with PURGE option          : '||l_drop_purge);
---sys.dbms_output.put_line('No alter prefix                        : '||l_noalterprefix);
+-- sys.dbms_output.put_line('No alter prefix                        : '||l_noalterprefix);
   sys.dbms_output.put_line('Force rebuild if no change             : '||l_forcebuild);
   sys.dbms_output.put_line('Force descending index                 : '||l_desc_index);
   sys.dbms_output.put_line('Repopulate default list sub-partition  : '||l_repopdfltsub);
@@ -5603,7 +5611,8 @@ BEGIN
 END display_defaults;
 
 ------------------------------------------------------------------------------------------------------
---read defaults from contexts
+-- read defaults from contexts
+------------------------------------------------------------------------------------------------------
 PROCEDURE reset_defaults IS
   l_module VARCHAR2(48);
   l_action VARCHAR2(32);
@@ -5619,7 +5628,8 @@ BEGIN
 END reset_defaults;
 
 ------------------------------------------------------------------------------------------------------
---set new defaults to contexts
+-- set new defaults to contexts
+------------------------------------------------------------------------------------------------------
 PROCEDURE set_defaults
 (p_chardef         VARCHAR2 DEFAULT ''
 ,p_logging         VARCHAR2 DEFAULT ''
@@ -5636,11 +5646,11 @@ PROCEDURE set_defaults
 ,p_build_stats     VARCHAR2 DEFAULT ''
 ,p_deletetempstats VARCHAR2 DEFAULT ''
 ,p_longtoclob      VARCHAR2 DEFAULT ''
---      ,p_ddltrigger      VARCHAR2 DEFAULT '*'
+-- ,p_ddltrigger      VARCHAR2 DEFAULT '*'
 ,p_ddlenable       VARCHAR2 DEFAULT ''
 ,p_ddldisable      VARCHAR2 DEFAULT ''
 ,p_drop_purge      VARCHAR2 DEFAULT ''
---      ,p_noalterprefix   VARCHAR2 DEFAULT ''
+-- ,p_noalterprefix   VARCHAR2 DEFAULT ''
 ,p_forcebuild      VARCHAR2 DEFAULT ''
 ,p_desc_index      VARCHAR2 DEFAULT ''
 ,p_repopdfltsub    VARCHAR2 DEFAULT ''
@@ -5654,7 +5664,7 @@ PROCEDURE set_defaults
 		dbms_application_info.set_module(module_name=>k_module, action_name=>'SET_DEFAULTS');
 		sys.dbms_output.enable(NULL);
 
-		read_context; --read current defaults
+		read_context; -- read current defaults
 		IF p_chardef IS NOT NULL THEN
 			l_chardef := p_chardef;
 		END IF;
@@ -5760,7 +5770,8 @@ PROCEDURE set_defaults
 	END set_defaults;
 
 ------------------------------------------------------------------------------------------------------
-----make sure that working storage tables are empty
+---- make sure that working storage tables are empty
+-------------------------------------------------------------------------------------------------------
 	PROCEDURE truncate_tables 
 	(p_all BOOLEAN DEFAULT FALSE
 	) IS
@@ -5780,7 +5791,7 @@ PROCEDURE set_defaults
 			SELECT 	table_name
 			FROM 	user_tables
 			WHERE	(	l_all = 1
-				AND	table_name IN( --set up by partdata script
+				AND	table_name IN( -- set up by partdata script
 						'GFC_PS_IDXDDLPARM',
 						'GFC_PART_TABLES',
 						'GFC_PART_INDEXES',
@@ -5788,11 +5799,11 @@ PROCEDURE set_defaults
 						'GFC_TEMP_TABLES',
 						'GFC_PART_LISTS',
 						'GFC_PART_RANGE_LISTS',
-						'GFC_PS_INDEXDEFN', --16.6.2010 moved to truncate when all metadata cleared
-						'GFC_PS_KEYDEFN' --16.6.2010 moved to truncate when all metadata cleared
+						'GFC_PS_INDEXDEFN', -- 16.6.2010 moved to truncate when all metadata cleared
+						'GFC_PS_KEYDEFN' -- 16.6.2010 moved to truncate when all metadata cleared
 					)
 				)
-			OR 	table_name IN( --maintained by package
+			OR 	table_name IN( -- maintained by package
 					'GFC_PS_TABLES',
 					'GFC_PS_TAB_COLUMNS',
 					'GFC_ORA_TAB_COLUMNS',
@@ -5807,13 +5818,14 @@ PROCEDURE set_defaults
 		dbms_application_info.set_module(module_name=>l_module, action_name=>l_action);
 	END truncate_tables;
 
------------------------------------------------------------------------------------------------------------
---this is the start of the processing
+-------------------------------------------------------------------------------------------------------
+-- this is the start of the processing
+-------------------------------------------------------------------------------------------------------
 PROCEDURE main 
-(p_part_id     VARCHAR2 DEFAULT ''  --Build matching list of PART_IDs
-,p_recname     VARCHAR2 DEFAULT ''  --name of table(s) to be built-pattern matching possible-default null implies all
-,p_rectype     VARCHAR2 DEFAULT 'A' --Build (P)artitioned tables, Global (T)emp tables, a(R)chive tables or (A)ll tables - default ALL
-,p_projectname VARCHAR2 DEFAULT ''  --Build records in named Application Designer Project
+(p_part_id     VARCHAR2 DEFAULT ''  -- build matching list of PART_IDs
+,p_recname     VARCHAR2 DEFAULT ''  -- name of table(s) to be built-pattern matching possible-default null implies all
+,p_rectype     VARCHAR2 DEFAULT 'A' -- build (P)artitioned tables, Global (T)emp tables, a(R)chive tables or (A)ll tables - default ALL
+,p_projectname VARCHAR2 DEFAULT ''  -- build records in named Application Designer Project
 )IS
   l_module VARCHAR2(48);
   l_action VARCHAR2(32);
@@ -5845,8 +5857,8 @@ BEGIN
   gfc_ps_tab_columns(p_part_id=>p_part_id
                     ,p_recname=>p_recname);
 
---expand_sbr; -- 7.3.2012 if use psrecfielddb don't need to expand sub-records
---shuffle_long;
+-- expand_sbr; -- 7.3.2012 if use psrecfielddb do not  need to expand sub-records
+-- shuffle_long;
   match_db;
 
   gfc_ps_indexdefn(p_part_id=>p_part_id
@@ -5878,17 +5890,3 @@ END gfc_pspart;
 set echo off
 show errors
 spool off
-
-/*
---create user psarch
-grant create session to psarch;
-grant resource to psarch;
-grant create table to psarch;
-grant create procedure to psarch;
-grant select on sys.dba_tables to psarch;
-grant select on sys.dba_tab_partitions to psarch;
-grant select on sysadm.psrecdefn to psarch;
-grant select on sysadm.gfc_part_tables to psarch;
-grant select on sysadm.gfc_part_ranges to psarch;
-@gfcarch_hcm90.sql
-*/
