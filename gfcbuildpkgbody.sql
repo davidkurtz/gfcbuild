@@ -6,7 +6,7 @@ set echo on
 spool gfcbuildpkgbody
 
 -----------------------------------------------------------------------------------------------------------
---SOurce Code
+--Source Code
 -----------------------------------------------------------------------------------------------------------
 CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
 
@@ -85,7 +85,9 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
 		sys.dbms_output.put_line('03.06.2009 - Extended check descending partitioning columns in unique indexes to subrecords');
 		sys.dbms_output.put_line('23.04.2010 - Add ability to add range partitions by splitting');
 		sys.dbms_output.put_line('01.05.2010 - Correct setting new table LOGGING NOPARALLEL');
-
+		sys.dbms_output.put_line('05.05.2010 - Create table only if doesn''t exist, add Colums when altering table');
+		sys.dbms_output.put_line('17.05.2010 - Temporary Record that are not declared to any AE can be GTT');
+		sys.dbms_output.put_line('08.06.2010 - Specified Source Table');
 	END;
 
 --read defaults from contexts
@@ -367,13 +369,7 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
                 WHERE   r.recname = t.recname
                 AND	(	r.rectype = 0
                         OR	(	r.rectype = 7
-		                AND     r.recname IN(
-						SELECT 	a.recname
-						FROM	psaeappldefn b
-						, 	psaeappltemptbl a
-						WHERE 	a.ae_applid = b.ae_applid
-						AND	b.ae_disable_restart = 'Y'
-						MINUS
+		                AND     NOT r.recname IN(
 						SELECT 	a.recname
 						FROM	psaeappldefn b
 						, 	psaeappltemptbl a
@@ -386,11 +382,37 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
 		AND	(p_rectype IN('A','T') OR p_rectype IS NULL)
                 ;
 
+-----------------------------------------------------------------------------------------------------------
+--17.5.2010 this test was previously in the above statement - but PeopleSoft delivers temp tables that  
+--are not declared to a process, and the first part looks for tables associated with a non-restartable
+--process
+-----------------------------------------------------------------------------------------------------------
+--		                AND     r.recname IN(
+--						SELECT 	a.recname
+--						FROM	psaeappldefn b
+--						, 	psaeappltemptbl a
+--						WHERE 	a.ae_applid = b.ae_applid
+--						AND	b.ae_disable_restart = 'Y'
+--						MINUS
+--						SELECT 	a.recname
+--						FROM	psaeappldefn b
+--						, 	psaeappltemptbl a
+--						WHERE 	a.ae_applid = b.ae_applid
+--						AND	b.ae_disable_restart = 'N'
+--					)
+-----------------------------------------------------------------------------------------------------------
+
+-----------------------------------------------------------------------------------------------------------
+--17.5.2010 correction to update to handle tables not declared to AEs
+-----------------------------------------------------------------------------------------------------------
                 UPDATE gfc_ps_tables g
                 SET    temptblinstances = (
                        SELECT NVL(o.temptblinstances+t.temptblinstances,0) temptblinstances
-                       FROM   psoptions o, pstemptblcntvw t
-                       WHERE  t.recname(+) = g.recname)
+                       FROM   psoptions o
+		       ,      gfc_ps_tables g1
+                              LEFT OUTER JOIN pstemptblcntvw t
+                              ON   t.recname = g1.recname
+		       WHERE g1.recname = g.recname)
                 WHERE  g.rectype = 7
                 ;
 
@@ -470,6 +492,9 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
                 AND     x.subindexid = i.indexid
                 AND     x.subrecname = i.recname
 		AND	(x.recname LIKE p_recname OR p_recname IS NULL) 
+		MINUS
+		SELECT 	recname, indexid, subrecname, subindexid, platform_ora, custkeyorder, uniqueflag
+		FROM	gfc_ps_indexdefn
 --		ORDER BY 1,2,3,4,5
                 ;
         END;
@@ -485,25 +510,22 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
                 SELECT  recname, indexid, keyposn, fieldname, ascdesc
                 FROM    gfc_ps_keydefn_vw
 		WHERE	(recname LIKE p_recname OR p_recname IS NULL) 
-                ;
-
+		UNION
 --insert first columns of alternate search key indexes
-                INSERT INTO gfc_ps_keydefn
-                (       recname, indexid, keyposn, fieldname, ascdesc)
                 SELECT  c.recname, c.indexid, 1, c.fieldname, ascdesc
                 FROM    gfc_ps_alt_ind_cols c
 		WHERE	(c.recname LIKE p_recname OR p_recname IS NULL) 
-                ;
-
+		UNION
 --insert other coulmns of alternate search key indexes
-                INSERT INTO gfc_ps_keydefn
-                (       recname, indexid, keyposn, fieldname, ascdesc)
                 SELECT  c.recname, c.indexid, k.fieldposn+1, k.fieldname, k.ascdesc
                 FROM    gfc_ps_alt_ind_cols c
                 ,       gfc_ps_keydefn_vw k
                 where   k.recname = c.recname
                 AND     k.indexid = '_'
 		AND	(c.recname LIKE p_recname OR p_recname IS NULL) 
+		MINUS
+		SELECT	recname, indexid, keyposn, fieldname, ascdesc
+		FROM	gfc_ps_keydefn
                 ;
 --30.6.2005-remove special processing columns
 --                DELETE FROM gfc_ps_keydefn
@@ -986,7 +1008,8 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
         END;
 
 --list columns in table for column list in create table DDL
-        PROCEDURE tab_col_list(p_recname VARCHAR2, p_column_name BOOLEAN DEFAULT TRUE) IS
+        PROCEDURE tab_col_list(p_recname     VARCHAR2
+	                      ,p_column_name BOOLEAN DEFAULT TRUE) IS
                 CURSOR c_tab_cols(p_recname VARCHAR2) IS
                 SELECT  g.*, c.column_name
                 FROM    (
@@ -1022,7 +1045,11 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
 			ELSIF p_tab_cols.fieldtype IN(2,3) THEN -- numeric
 				l_col_def := l_col_def||'0';
 			ELSIF p_tab_cols.fieldtype IN(4,5,6) THEN --date
-				l_col_def := l_col_def||'NULL';
+				IF mod(FLOOR(p_tab_cols.useedit/256),2) = 1 THEN --required
+					l_col_def := l_col_def||'SYSDATE';
+				ELSE
+					l_col_def := l_col_def||'NULL';
+				END IF;
 			ELSIF p_tab_cols.fieldtype IN(1,8,9) THEN -- long
 				IF mod(FLOOR(p_tab_cols.useedit/256),2) = 1 THEN --required
 					l_col_def := l_col_def||''' ''';
@@ -1855,7 +1882,7 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
 			UPDATE	gfc_ps_tables t
 			SET	t.match_db = 'N'
 			;
-		ELSE
+ 		ELSE
 			UPDATE	gfc_ps_tables t
 			SET	t.match_db = 'N'
 			WHERE	t.table_type = 'P'
@@ -1913,14 +1940,21 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
 				FROM	gfc_ps_indexdefn i
 				,	gfc_part_tables t
 				,	gfc_part_ranges r --qwert add ps defaults
+				,	gfc_part_indexes pi --26.5.2010 only include partitioned indexes
 				WHERE	t.recname = p_recname
 				AND	r.part_name = p_part_name
 				AND	i.recname = p_recname
 				AND	r.part_id = t.part_id
 				AND	i.platform_ora = 1 --1.4.2009
+				AND	pi.recname = p_recname
+				AND	pi.indexid = i.indexid
+				AND	pi.part_type != 'N'
 				ORDER BY 1
 				) LOOP
 			IF p_indexes.idx_tablespace IS NOT NULL THEN
+				IF l_counter = 0 THEN --26.5.2010 added error control in case indexes are not partitioned
+					whenever_sqlerror(p_type,FALSE);
+				END IF;
 				ins_line(p_type,'ALTER INDEX '||LOWER(l_schema2||'PS'||p_indexes.indexid||p_recname)||
 			                ' MODIFY DEFAULT ATTRIBUTES TABLESPACE '||LOWER(p_indexes.idx_tablespace));
 				ins_line(p_type,'/');
@@ -1928,6 +1962,7 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
 			END IF;
 		END LOOP;
 		IF l_counter > 0 THEN
+			whenever_sqlerror(p_type,TRUE);
 			ins_line(p_type,'');
 		END IF;
 	END;
@@ -1940,12 +1975,19 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
 				SELECT	i.indexid, t.idx_tablespace
 				FROM	gfc_ps_indexdefn i
 				,	gfc_part_tables t --qwert add ps defaults
+				,	gfc_part_indexes pi --26.5.2010 only include partitioned indexes
 				WHERE	t.recname = p_recname
 				AND	i.recname = p_recname
 				AND	i.platform_ora = 1 --1.4.2009
+				AND	pi.recname = p_recname
+				AND	pi.indexid = i.indexid
+				AND	pi.part_type != 'N'
 				ORDER BY 1
 				) LOOP
 			IF p_indexes.idx_tablespace IS NOT NULL THEN
+				IF l_counter = 0 THEN
+					whenever_sqlerror(p_type,FALSE);
+				END IF;
 				ins_line(p_type,'ALTER INDEX '||LOWER(l_schema2||'PS'||p_indexes.indexid||p_recname)||
 			                ' MODIFY DEFAULT ATTRIBUTES TABLESPACE '||LOWER(p_indexes.idx_tablespace));
 				ins_line(p_type,'/');
@@ -1953,6 +1995,7 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
 			END IF;
 		END LOOP;
 		IF l_counter > 0 THEN
+			whenever_sqlerror(p_type,FALSE);
 			ins_line(p_type,'');
 		END IF;
 	END;
@@ -2390,7 +2433,7 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
                                 p_part_id VARCHAR2, p_part_type VARCHAR2, 
                                 p_subpart_type VARCHAR2, p_subpartitions INTEGER) IS
                 CURSOR c_tab_parts(p_recname VARCHAR2) IS
-		SELECT	pr.*
+		SELECT	/*+LEADING(t pr) USE_NL(pr pr2)*/ pr.*
 		,	pr2.part_name      part_name2
 		,	pr2.tab_tablespace tab_tablespace2
 		,	pr2.idx_tablespace idx_tablespace2
@@ -2409,6 +2452,7 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
 			,	user_tab_partitions tp2
 			WHERE	pr2a.part_id = pr.part_id
 			AND	pr2a.part_no > pr.part_no
+                        AND     tp2.table_name = t.table_name
 			AND	tp2.partition_name = p_recname||'_'||pr2a.part_name
 			)
 		AND NOT EXISTS(
@@ -2524,7 +2568,10 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
                 SELECT  t.table_name
                 ,       t.table_type
                 ,       p.*
+		,	o.table_name ora_table_name
                 FROM    gfc_ps_tables t
+			LEFT OUTER JOIN user_tables o
+			ON o.table_name = t.table_name
                 ,       gfc_part_tables p
                 WHERE   t.table_type = 'P'
                 AND     t.match_db = 'N'
@@ -2577,18 +2624,30 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
 			ins_line(0,'rem Partitioning Scheme '||p_tables.part_id);
                         whenever_sqlerror(0,TRUE);
 			ddltrigger(0,FALSE); --added 10.10.2007
-                        whenever_sqlerror(0,FALSE);
-                        ins_line(0,'DROP TABLE '||LOWER(l_schema||'old_'||p_tables.recname)||l_drop_purge_suffix);
-			ins_line(0,'/');
-                        ins_line(0,'');
-                        whenever_sqlerror(0,TRUE);
-                        rename_parts(p_tables.table_name,l_drop_index);
-			IF (   (p_tables.subpart_type = 'L') 
-                            OR (p_tables.subpart_type = 'H' AND p_tables.hash_partitions > 1)
-                           ) AND p_tables.subpart_column IS NOT NULL THEN
-                        	rename_subparts(p_tables.table_name,l_drop_index);
+
+			IF p_tables.src_table_name IS NULL THEN --added 8.6.2010
+	                        whenever_sqlerror(0,FALSE);
+        	                ins_line(0,'DROP TABLE '||LOWER(l_schema||'old_'||p_tables.recname)||l_drop_purge_suffix);
+				ins_line(0,'/');
+                        	ins_line(0,'');
+	                        whenever_sqlerror(0,TRUE);
+        	                rename_parts(p_tables.table_name,l_drop_index);
+				IF (   (p_tables.subpart_type = 'L') 
+                        	    OR (p_tables.subpart_type = 'H' AND p_tables.hash_partitions > 1)
+	                           ) AND p_tables.subpart_column IS NOT NULL THEN
+        	                	rename_subparts(p_tables.table_name,l_drop_index);
+				END IF;
+			ELSE
+	                        whenever_sqlerror(0,FALSE);
+        	                ins_line(0,'DROP TABLE '||LOWER(l_schema||'gfc_'||p_tables.recname)||l_drop_purge_suffix);
+				ins_line(0,'/');
+        	                ins_line(0,'DROP TABLE '||LOWER(l_schema||p_tables.table_name)||l_drop_purge_suffix);
+				ins_line(0,'/');
+                        	ins_line(0,'');
 			END IF;
+
                         pause_sql(0);
+	                whenever_sqlerror(0,TRUE);
                         ins_line(0,'CREATE TABLE '||LOWER(l_schema||'gfc_'||p_tables.recname));
                         tab_cols(0,p_tables.recname,l_longtoclob);
                         IF p_tables.tab_tablespace IS NOT NULL THEN
@@ -2649,53 +2708,80 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
 			END IF;
 
 --18.9.2003-added trigger to prevent updates on tables whilst being rebuilt - will be dropped when table is dropped
-                        ins_line(0,'LOCK TABLE '||LOWER(l_schema||p_tables.table_name)
-			         ||' IN EXCLUSIVE MODE'); --lock table to ensure trigger creates
-			ins_line(0,'/');
-                        ins_line(0,'');
-                        ins_line(0,'CREATE OR REPLACE TRIGGER '||LOWER(l_schema||p_tables.recname)||'_nochange');
-                        ins_line(0,'BEFORE INSERT OR UPDATE OR DELETE ON '||LOWER(l_schema||p_tables.table_name));
-                        ins_line(0,'BEGIN');
-                        ins_line(0,'   RAISE_APPLICATION_ERROR(-20100,''NO OPERATIONS ALLOWED ON '
-			         ||UPPER(l_schema||p_tables.table_name)||''');');
-                        ins_line(0,'END;');
-                        ins_line(0,'/');
-                        ins_line(0,'');
-
-                        ins_line(0,'LOCK TABLE '||LOWER(l_schema||p_tables.table_name)
-			         ||' IN EXCLUSIVE MODE'); --lock table to prevent consistent reads on query
-			ins_line(0,'/');
-                        ins_line(0,'');
-
-                        ins_line(0,'INSERT /*'||l_hint||'*/ INTO '||LOWER(l_schema||'gfc_'||p_tables.recname)||' (');
-                        tab_col_list(p_tables.recname,p_column_name => TRUE);
-                        ins_line(0,') SELECT');
-                        tab_col_list(p_tables.recname,p_column_name => FALSE);
-                        ins_line(0,'FROM '||LOWER(l_schema||p_tables.table_name));
-
+--5.5.2010-only query source table if it exists
+			IF p_tables.src_table_name IS NOT NULL THEN
+	                        ins_line(0,'INSERT /*'||l_hint||'*/ INTO '||LOWER(l_schema||'gfc_'||p_tables.recname)||' (');
+	                        tab_col_list(p_tables.recname,p_column_name => TRUE);
+	                        ins_line(0,') SELECT');
+	                        tab_col_list(p_tables.recname,p_column_name => TRUE);
+				ins_line(0,'FROM '||LOWER(l_schema||p_tables.src_table_name));
 --20.10.2008 - added criteria option
-			IF p_tables.criteria IS NOT NULL THEN
-	                        ins_line(0,p_tables.criteria);
+				IF p_tables.criteria IS NOT NULL THEN
+		                        ins_line(0,p_tables.criteria);
+				END IF;
+
+				ins_line(0,'/');
+       		                ins_line(0,'');
+                	        ins_line(0,'COMMIT');
+				ins_line(0,'/');
+                        	pause_sql(0);
+			ELSIF p_tables.ora_table_name IS NOT NULL THEN
+	                        ins_line(0,'LOCK TABLE '||LOWER(l_schema||p_tables.ora_table_name)
+				         ||' IN EXCLUSIVE MODE'); --lock table to ensure trigger creates
+				ins_line(0,'/');
+                        	ins_line(0,'');
+	                        ins_line(0,'CREATE OR REPLACE TRIGGER '||LOWER(l_schema||p_tables.recname)||'_nochange');
+        	                ins_line(0,'BEFORE INSERT OR UPDATE OR DELETE ON '
+				                                       ||LOWER(l_schema||p_tables.ora_table_name));
+	                        ins_line(0,'BEGIN');
+        	                ins_line(0,'   RAISE_APPLICATION_ERROR(-20100,''NO OPERATIONS ALLOWED ON '
+				         ||UPPER(l_schema||p_tables.ora_table_name)||''');');
+	                        ins_line(0,'END;');
+        	                ins_line(0,'/');
+                	        ins_line(0,'');
+
+	                        ins_line(0,'LOCK TABLE '||LOWER(l_schema||p_tables.ora_table_name)
+				         ||' IN EXCLUSIVE MODE'); --lock table to prevent consistent reads on query
+				ins_line(0,'/');
+                        	ins_line(0,'');
+
+	                        ins_line(0,'INSERT /*'||l_hint||'*/ INTO '||LOWER(l_schema||'gfc_'||p_tables.recname)||' (');
+	                        tab_col_list(p_tables.recname,p_column_name => TRUE);
+	                        ins_line(0,') SELECT');
+	                        tab_col_list(p_tables.recname,p_column_name => FALSE);
+       	                	ins_line(0,'FROM '||LOWER(l_schema||p_tables.ora_table_name));
+--20.10.2008 - added criteria option
+				IF p_tables.criteria IS NOT NULL THEN
+		                        ins_line(0,p_tables.criteria);
+				END IF;
+				ins_line(0,'/');
+       		                ins_line(0,'');
+                	        ins_line(0,'COMMIT');
+				ins_line(0,'/');
+                        	pause_sql(0);
 			END IF;
 
-			ins_line(0,'/');
-                        ins_line(0,'');
-                        ins_line(0,'COMMIT');
-			ins_line(0,'/');
-                        pause_sql(0);
+
                         mk_part_indexes(p_tables.recname,p_tables.table_name, l_schema);
                         pause_sql(0);
 --9.10.2003 - alter table to logging and noparallel
-			whenever_sqlerror(0,FALSE);
+			whenever_sqlerror(0,TRUE);
                         --changed 1.5.2010 to make new table noparallel logging
                         ins_line(0,l_noalterprefix||'ALTER TABLE '||LOWER(l_schema||'gfc_'||p_tables.recname)
 			                          ||' LOGGING NOPARALLEL MONITORING'); --6.9.2007
 			ins_line(0,'/');
+
+
+			whenever_sqlerror(0,FALSE);
+                        --5.5.2010 only if old table exists
+			IF p_tables.ora_table_name IS NOT NULL THEN
+	                        ins_line(0,l_noalterprefix||'ALTER TABLE '||LOWER(l_schema||p_tables.table_name)
+				                          ||' RENAME TO old_'||LOWER(p_tables.recname)); --6.9.2007
+				ins_line(0,'/');
+                        	ins_line(0,'');
+			END IF;
+
 			whenever_sqlerror(0,TRUE);
-                        ins_line(0,l_noalterprefix||'ALTER TABLE '||LOWER(l_schema||p_tables.table_name)
-			                          ||' RENAME TO old_'||LOWER(p_tables.recname)); --6.9.2007
-			ins_line(0,'/');
-                        ins_line(0,'');
                         ins_line(0,l_noalterprefix||'ALTER TABLE '||LOWER(l_schema||'gfc_'||p_tables.recname)
 			                          ||' RENAME TO '||LOWER(p_tables.table_name)); --6.9.2007
 			ins_line(0,'/');
@@ -2787,13 +2873,13 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
                                 l_counter := l_counter + 2;
                         END LOOP;
                         pause_sql(0);
+                        whenever_sqlerror(0,FALSE); --6.9.2007
                         ins_line(0,l_noalterprefix||'DROP TABLE ' 
 			                          ||LOWER(l_schema||'old_'||p_tables.recname)
                                                   ||l_drop_purge_suffix); --6.9.2007
 			ins_line(0,'/');
                         ins_line(0,'');
                         ddltrigger(0,TRUE); --added 10.10.2007
-                        whenever_sqlerror(0,FALSE); --6.9.2007
                         ins_line(0,'DROP TRIGGER '||LOWER(l_schema||p_tables.recname)||'_nochange'); --6.9.2007
 			ins_line(0,'/');
                         ins_line(0,'');
@@ -3583,15 +3669,16 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
 						'GFC_PART_RANGES',
 						'GFC_TEMP_TABLES',
 						'GFC_PART_LISTS',
-						'GFC_PART_RANGE_LISTS')
+						'GFC_PART_RANGE_LISTS',
+						'GFC_PS_INDEXDEFN', --16.6.2010 moved to truncate when all metadata cleared
+						'GFC_PS_KEYDEFN' --16.6.2010 moved to truncate when all metadata cleared
+					)
 				)
 			OR 	table_name IN( --maintained by package
 					'GFC_PS_TABLES',
 					'GFC_PS_TAB_COLUMNS',
 					'GFC_ORA_TAB_COLUMNS',
-					'GFC_DDL_SCRIPT',
-					'GFC_PS_INDEXDEFN',
-					'GFC_PS_KEYDEFN')
+					'GFC_DDL_SCRIPT')
 		) LOOP
 
 			EXECUTE IMMEDIATE 'TRUNCATE TABLE '||p_tables.table_name;
