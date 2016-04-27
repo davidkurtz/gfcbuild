@@ -80,6 +80,7 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
 		sys.dbms_output.put_line('16.12.2008 - Single table build options can be combined');
 		sys.dbms_output.put_line('23.01.2009 - Partitioning columns in unique indexes must not be descending');
 		sys.dbms_output.put_line('01.04.2009 - Corrections to add partition scripts');
+		sys.dbms_output.put_line('18.04.2009 - Override Default Application Designer Project Name');
 
 	END;
 
@@ -238,12 +239,16 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
         END;
 
 --make a project of the interested tables
-        PROCEDURE gfc_project IS
+        PROCEDURE gfc_project(p_projectname VARCHAR2 DEFAULT '') IS
                 l_version INTEGER;
                 l_version2 INTEGER;
                 l_projectname VARCHAR2(20 CHAR) := UPPER(l_scriptid);
                 l_sql VARCHAR2(32767);
         BEGIN
+		IF p_projectname IS NOT NULL THEN
+			l_projectname := p_projectname;
+		END IF;
+
                 UPDATE  PSLOCK
                 SET     version = version + 1
                 WHERE   objecttypename IN ('PJM','SYS');
@@ -3431,8 +3436,9 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
 
 --this is the start of the processing
 	PROCEDURE main 
-	(p_recname VARCHAR2 DEFAULT ''
-	,p_rectype VARCHAR2 DEFAULT 'A'
+	(p_recname     VARCHAR2 DEFAULT ''  --name of table(s) to be built-pattern matching possible-default null implies all
+        ,p_rectype     VARCHAR2 DEFAULT 'A' --Build (P)artitioned tables, Global (T)emp tables, or (A)ll tables - default ALL
+        ,p_projectname VARCHAR2 DEFAULT ''  --Build records in named Application Designer Project
 	)IS
 	BEGIN
 		read_context;
@@ -3454,7 +3460,7 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
 		,p_rectype => p_rectype
 		);
 
-        	gfc_project;
+        	gfc_project(p_projectname => p_projectname);
 
 	        gfc_ps_tab_columns(p_recname => p_recname);
 
