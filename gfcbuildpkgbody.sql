@@ -18,7 +18,7 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
         l_schema2 VARCHAR2(31 CHAR);                     /*schema name with separator*/
         l_debug BOOLEAN := FALSE;                        /*enable debug messages*/
         l_unicode_enabled INTEGER := 0;                  /*unicode database*/
-        l_database_options INTEGER := 0;                 /*database options*/ --6.9.2007
+        l_database_options INTEGER := 0;                 /*database options--6.9.2007*/
 	l_lf VARCHAR2(1 CHAR) := CHR(10);                /*line feed character*/
         l_drop_purge_suffix VARCHAR2(10 CHAR);           /*use explicit purge clause on drop table - 14.2.2008*/
 	l_sys_context VARCHAR2(10 CHAR) := 'GFC_PSPART'; /*name of system context*/
@@ -78,6 +78,9 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
 		sys.dbms_output.put_line('28.08.2008 - conversion to package procedure');
 		sys.dbms_output.put_line('16.09.2008 - DDL moved to gfcbuildtab');
 		sys.dbms_output.put_line('16.12.2008 - Single table build options can be combined');
+		sys.dbms_output.put_line('23.01.2009 - Partitioning columns in unique indexes must not be descending');
+		sys.dbms_output.put_line('01.04.2009 - Corrections to add partition scripts');
+
 	END;
 
 --read defaults from contexts
@@ -513,6 +516,23 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
 			AND	(j.recname LIKE p_recname OR p_recname IS NULL) 
 			)
                 ;
+
+--remove descending key option on partition and subpartition columns 21.3.2009
+		UPDATE	gfc_ps_keydefn k
+		SET 	k.ascdesc = 1 /*is now an ascending column*/
+		WHERE 	k.ascdesc = 0 /*is a descending column*/
+		AND EXISTS(
+			SELECT 	'x'
+			FROM 	psindexdefn i
+			, 	gfc_part_tables p
+			WHERE 	i.recname = k.recname
+			AND 	i.indexid = k.indexid
+			AND 	i.uniqueflag = 1 /*it's a unique index*/
+			AND 	p.recname = k.recname
+			AND 	k.fieldname IN (p.part_column,p.subpart_column)
+			AND	ROWNUM <= 1
+			)
+		;
 
         END;
 
@@ -1315,12 +1335,15 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
 --indexes not built descending in PT8.15
 --              ||      DECODE(k.ascdesc,0,' DESC')
                 ,       k.ascdesc
+		,	t.part_column, t.subpart_column
                 FROM    gfc_ps_keydefn k
-                ,       gfc_ps_tab_columns c --6.9.2007 to determine fields not expressions
+			LEFT OUTER JOIN gfc_ps_tab_columns c --6.9.2007 to determine fields not expressions
+			ON c.recname = k.recname
+			AND c.fieldname = k.fieldname
+			LEFT OUTER JOIN gfc_part_tables t
+			ON t.recname = k.recname
                 WHERE   k.recname = p_recname
                 AND     k.indexid = p_indexid
-		AND	c.recname(+) = k.recname
-		AND	c.fieldname(+) = k.fieldname
                 ORDER BY k.keyposn
                 ;
 
@@ -1339,7 +1362,8 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
                                 l_col_def := '(';
                         END IF;
                         l_col_def := l_col_def||p_ind_cols.fieldname;
-                        IF l_desc_index = 'Y' AND p_ind_cols.ascdesc = 0 THEN
+
+                        IF (l_desc_index = 'Y' OR l_desc_index IS NULL) AND p_ind_cols.ascdesc = 0 THEN
                                 l_col_def := l_col_def || ' DESC';
                         END IF;
                         ins_line(p_type,l_col_def);
@@ -1885,6 +1909,7 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
 				AND	r.part_name = p_part_name
 				AND	i.recname = p_recname
 				AND	r.part_id = t.part_id
+				AND	i.platform_ora = 1 --1.4.2009
 				ORDER BY 1
 				) LOOP
 			IF p_indexes.idx_tablespace IS NOT NULL THEN
@@ -1909,6 +1934,7 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
 				,	gfc_part_tables t --qwert add ps defaults
 				WHERE	t.recname = p_recname
 				AND	i.recname = p_recname
+				AND	i.platform_ora = 1 --1.4.2009
 				ORDER BY 1
 				) LOOP
 			IF p_indexes.idx_tablespace IS NOT NULL THEN
