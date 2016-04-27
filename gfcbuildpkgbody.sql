@@ -201,6 +201,7 @@ BEGIN
   sys.dbms_output.put_line('15.04.2013 - Support for Oracle Timestamp column type added');
   sys.dbms_output.put_line('14.08.2013 - Global Temporary Tables not supressed by restartable AE with 0 instances');
   sys.dbms_output.put_line('28.08.2013 - Fix to drop all not just partitioned indexes on table rebuild');
+  sys.dbms_output.put_line('11.12.2013 - No default roles.  They must now be specified');
   dbms_application_info.set_module(module_name=>l_module, action_name=>l_action);
 END history;
 
@@ -220,8 +221,8 @@ BEGIN
   l_parallel_index := 'Y';         -- set to true to enable parallel index build
   l_roles := 'N';                  -- should roles be granted
   l_scriptid := 'GFCBUILD';        -- id string in script and project names
-  l_update_all := 'PS_UPDATE_ALL'; -- name of role than can update PS tables
-  l_read_all := 'PS_READ_ALL';     -- name of role than can read PS tables
+  l_update_all := '';              -- 11.12.2013 no default update all role any more
+  l_read_all := '';                -- 11.12.2013 no default real all role any more
   l_drop_index := 'Y';             -- if true drops index on exiting table, else alters name of index to old
   l_pause := 'N';                  -- if true add pause commands to build script
   l_explicit_schema := 'Y';        -- all objects schema explicitly named
@@ -1338,10 +1339,14 @@ PROCEDURE create_roles IS
                         -- ins_line(k_build,LOWER('spool '||LOWER(l_scriptid)||'_'||l_dbname||'.lst'));
                         signature(k_build,FALSE,l_scriptid);
                         ins_line(k_build,'');
-                        ins_line(k_build,'CREATE ROLE '||LOWER(l_update_all));
-                        ins_line(k_build,'/');
-                        ins_line(k_build,'CREATE ROLE '||LOWER(l_read_all));
-                        ins_line(k_build,'/');
+                        IF l_update_all IS NOT NULL THEN
+                          ins_line(k_build,'CREATE ROLE '||LOWER(l_update_all));
+                          ins_line(k_build,'/');
+                        END IF;
+                        IF l_read_all IS NOT NULL THEN
+                          ins_line(k_build,'CREATE ROLE '||LOWER(l_read_all));
+                          ins_line(k_build,'/');
+                        END IF;
                         ins_line(k_build,'');
                         ins_line(k_build,'spool off');
                 END IF;
@@ -4312,12 +4317,16 @@ PROCEDURE part_tables(p_part_id VARCHAR2 DEFAULT ''
                         ins_line(k_build,'');
 -- 9.10.2003 - was UBS specific but made generic
 			IF l_roles = 'Y' THEN
-                        	ins_line(k_build,'GRANT SELECT ON '||LOWER(l_schema||'gfc_'||p_tables.recname)
-                                                     ||' TO '||LOWER(l_read_all));
-				ins_line(k_build,'/');
-       	            	        ins_line(k_build,'GRANT INSERT, UPDATE, DELETE ON '||LOWER(l_schema||'gfc_'||p_tables.recname)
-                                                                     ||' TO '||LOWER(l_update_all));
-				ins_line(k_build,'/');
+                                IF l_read_all IS NOT NULL THEN --if there is a read role
+                                        ins_line(k_build,'GRANT SELECT ON '||LOWER(l_schema||'gfc_'||p_tables.recname)
+                                                                           ||' TO '||LOWER(l_read_all));
+                                        ins_line(k_build,'/');
+                                END IF;
+                                IF l_update_all IS NOT NULL THEN --if there is an update role
+       	            	                ins_line(k_build,'GRANT INSERT, UPDATE, DELETE ON '||LOWER(l_schema||'gfc_'||p_tables.recname)
+                                                                                           ||' TO '||LOWER(l_update_all));
+                                        ins_line(k_build,'/');
+                                END IF;
                 	        ins_line(k_build,'');
 			END IF;
 
