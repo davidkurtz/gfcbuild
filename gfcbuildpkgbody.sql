@@ -201,6 +201,7 @@ BEGIN
   sys.dbms_output.put_line('22.03.2013 - Add archive insert script to incrementally populate archive tables');
   sys.dbms_output.put_line('27.03.2013 - Global Partition Index Archive/Purge fix');
   sys.dbms_output.put_line('15.04.2013 - Support for Oracle Timestamp column type added');
+  sys.dbms_output.put_line('14.08.2013 - Global Temporary Tables not supressed by restartable AE with 0 instances');
   dbms_application_info.set_module(module_name=>l_module, action_name=>l_action);
 END history;
 
@@ -598,12 +599,14 @@ BEGIN
   WHERE   r.recname = t.recname
   AND     (  r.rectype = 0
           OR  (   r.rectype = 7
-    AND NOT r.recname IN(
+      AND NOT r.recname IN(
           SELECT   a.recname
           FROM  psaeappldefn b
           ,   psaeappltemptbl a
-          WHERE   a.ae_applid = b.ae_applid
+          WHERE  a.ae_applid = b.ae_applid
           AND  b.ae_disable_restart = 'N'
+          AND  b.ae_appllibrary = 'N' /*added 14.8.2013-do not suppress GTT if restartable AE appl library refs temp tables*/
+          AND  b.temptblinstances > 0 /*added 14.8.2013-do not suppress GTT if restartable AE subprogram refs temp tables with 0 instances*/
           )
     )
           )
@@ -4678,7 +4681,7 @@ BEGIN
     l_arch_schema     := COALESCE(p_tables.arch_schema,p_tables.override_schema,l_schema1);
     l_arch_table_name := COALESCE(p_tables.arch_table_name,p_tables.arch_sqltablename,p_tables.table_name);
 
-    --11.2.2013 if table is only deleted but has a noarch condition then we need an exchange table
+	    --11.2.2013 if table is only deleted but has a noarch condition then we need an exchange table
     IF p_tables.arch_flag = 'A' OR (p_tables.arch_flag = 'D' AND p_tables.noarch_condition IS NOT NULL) THEN
 
 --    ins_line(k_arch1,'set echo on pause off verify on feedback on timi on autotrace off pause off lines 100');
@@ -4829,8 +4832,8 @@ BEGIN
       ins_line(k_arch2,'GRANT SELECT, ALTER ON '||l_schema2||p_tables.base_sqltablename||' TO '||LOWER(l_arch_schema));
       ins_line(k_arch2,'/');
 
-      IF p_tables.arch_flag = 'A' THEN
-        --grant select, alter on base table to archive schema
+      IF p_tables.noarch_condition IS NOT NULL OR p_tables.arch_flag = 'D' THEN --8.5.2013 insert priv required for exchange
+        --grant insert on base table to archive schema if there is a no archive condition
         ins_line(k_arch2,'GRANT INSERT ON '||l_schema2||p_tables.base_sqltablename||' TO '||LOWER(l_arch_schema));
         ins_line(k_arch2,'/');
         ins_line(k_arch2,'');
@@ -4859,30 +4862,32 @@ BEGIN
   dbms_application_info.read_module(module_name=>l_module, action_name=>l_action);
   set_action(p_action_name=>'TEMP_TABLES');
 
-		IF l_build_stats = 'N' AND l_deletetempstats = 'Y' THEN
-			l_counter_start := 2; /*don't build stats command in table build script*/
-		ELSE 
-			l_counter_start := 0; /*do build stats command in table build script*/
-		END IF;
+  debug_msg('TEMP_TABLES:recname='||p_recname);
 
-		FOR p_tables IN(
-			SELECT   *
-			FROM     gfc_ps_tables
-			WHERE    table_type = 'T'
-			AND	(recname LIKE p_recname OR p_recname IS NULL)
-			ORDER BY recname)
-		LOOP
---              ins_line(k_build,'set echo on pause off verify on feedback on timi on autotrace off pause off lines 100');
---              ins_line(k_build,LOWER('spool '||LOWER(l_scriptid)||'_'||l_dbname||'_'||p_tables.recname||'.lst'));
-                signature(k_build,FALSE,l_scriptid,p_tables.recname);
+  IF l_build_stats = 'N' AND l_deletetempstats = 'Y' THEN
+    l_counter_start := 2; /*don't build stats command in table build script*/
+  ELSE 
+    l_counter_start := 0; /*do build stats command in table build script*/
+  END IF;
 
-                ddlpermit(k_build,TRUE); --added 29.10.2007
+  FOR p_tables IN(
+    SELECT   *
+    FROM     gfc_ps_tables
+    WHERE    table_type = 'T'
+    AND	(recname LIKE p_recname OR p_recname IS NULL)
+    ORDER BY recname)
+  LOOP
+--  ins_line(k_build,'set echo on pause off verify on feedback on timi on autotrace off pause off lines 100');
+--  ins_line(k_build,LOWER('spool '||LOWER(l_scriptid)||'_'||l_dbname||'_'||p_tables.recname||'.lst'));
+    signature(k_build,FALSE,l_scriptid,p_tables.recname);
 
---		    ins_line(k_index,'set echo on pause off verify on feedback on timi on autotrace off pause off lines 100');
---        	    ins_line(k_index,LOWER('spool gfcindex_'||l_dbname||'_'||p_tables.recname||'.lst'));
-		    signature(k_index,FALSE,'gfcindex',p_tables.recname);
+    ddlpermit(k_build,TRUE); --added 29.10.2007
 
-	                FOR l_tempinstance IN 0..p_tables.temptblinstances LOOP
+--  ins_line(k_index,'set echo on pause off verify on feedback on timi on autotrace off pause off lines 100');
+--  ins_line(k_index,LOWER('spool gfcindex_'||l_dbname||'_'||p_tables.recname||'.lst'));
+    signature(k_index,FALSE,'gfcindex',p_tables.recname);
+
+    FOR l_tempinstance IN 0..p_tables.temptblinstances LOOP
 
       	                        IF l_tempinstance > 0 THEN
         	                        l_suffix := LTRIM(TO_CHAR(l_tempinstance,'999'));
@@ -4934,22 +4939,23 @@ BEGIN
                         	        END LOOP;
 				END IF;
 	                        pause_sql(k_build);
-	                END LOOP;
-                        ddlpermit(k_build,FALSE); --added 29.10.2007
+    END LOOP;
+    ddlpermit(k_build,FALSE); --added 29.10.2007
 
-			l_counter := l_counter_start;
-			WHILE l_counter <= 2 LOOP
-	                       	ins_line(l_counter,'spool off');
-        	                ins_line(l_counter,'');
-				l_counter := l_counter + 2;
-			END LOOP;
-	                ins_line(k_index,'spool off');
-        	        ins_line(k_index,'');
+    l_counter := l_counter_start;
 
-                END LOOP;
-		unset_action(p_action_name=>l_action);
-        END;
+    WHILE l_counter <= 2 LOOP
+      ins_line(l_counter,'spool off');
+      ins_line(l_counter,'');
+      l_counter := l_counter + 2;
+    END LOOP;
 
+    ins_line(k_index,'spool off');
+    ins_line(k_index,'');
+
+  END LOOP;
+  unset_action(p_action_name=>l_action);
+END temp_tables;
 
 ---------------------------------------------------------------
 	PROCEDURE exec_sql
@@ -5818,7 +5824,7 @@ BEGIN
 
   read_context;
 
-  IF p_rectype IS NULL OR NOT p_rectype IN('A','T','P') THEN
+  IF p_rectype IS NULL OR NOT p_rectype IN('A','T','P','R') THEN
    RAISE_APPLICATION_ERROR(-20001,'GFCBUILD: Parameter p_rectype, invalid value '''||p_rectype||'''');
   END IF;
 
@@ -5853,7 +5859,7 @@ BEGIN
                ,p_recname=>p_recname);
   END IF;
 
-  IF p_rectype IN('A','R') OR p_rectype IS NULL THEN
+  IF p_rectype IN('A','P','R') OR p_rectype IS NULL THEN
     arch_tables(p_part_id=>p_part_id
                 ,p_recname=>p_recname);
   END IF;
