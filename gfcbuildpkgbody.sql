@@ -29,17 +29,18 @@ k_module      CONSTANT VARCHAR2(48) := $$PLSQL_UNIT;
 k_sys_context CONSTANT VARCHAR2(10 CHAR) := 'GFC_PSPART'; /*name of system context*/
 -----------------------------------------------------------------------------------------------------------
 l_lineno INTEGER := 0;
-l_dbname VARCHAR2(8 CHAR);                       /*PeopleSoft database name*/
-l_oraver NUMBER;                                 /*oracle rdbms version*/
---l_parallel_max_servers INTEGER;                /*value of oracle initialisation parameter*/
-l_ptver  VARCHAR2(20 CHAR);                      /*peopletools version*/
-l_schema1 VARCHAR2(30 CHAR);                     /*schema name*/
-l_schema2 VARCHAR2(31 CHAR);                     /*schema name with separator*/
-l_debug BOOLEAN := FALSE;                        /*enable debug messages*/
-l_unicode_enabled INTEGER := 0;                  /*unicode database*/
-l_database_options INTEGER := 0;                 /*database options--6.9.2007*/
-l_lf VARCHAR2(1 CHAR) := CHR(10);                /*line feed character*/
-l_drop_purge_suffix VARCHAR2(10 CHAR);           /*use explicit purge clause on drop table - 14.2.2008*/
+l_dbname VARCHAR2(8 CHAR);              /*PeopleSoft database name*/
+l_oraver NUMBER;                        /*oracle rdbms version*/
+--l_parallel_max_servers INTEGER;       /*value of oracle initialisation parameter*/
+l_ptver  VARCHAR2(20 CHAR);             /*peopletools version*/
+l_schema1 VARCHAR2(30 CHAR);            /*schema name*/
+l_schema2 VARCHAR2(31 CHAR);            /*schema name with separator*/
+l_debug BOOLEAN := FALSE;               /*enable debug messages*/
+l_unicode_enabled INTEGER := 0;         /*unicode database*/
+l_database_options INTEGER := 0;        /*database options--6.9.2007*/
+l_lf VARCHAR2(1 CHAR) := CHR(10);       /*line feed character*/
+l_drop_purge_suffix VARCHAR2(10 CHAR);  /*use explicit purge clause on drop table - 14.2.2008*/
+l_use_timestamp BOOLEAN := FALSE;       /*use oracle timestamp columns for time and datetime columns*/
 
 /*the following variables are set via the context*/
 l_chardef VARCHAR2(1 CHAR);             /*permit VARCHAR2 character definition*/
@@ -199,6 +200,7 @@ BEGIN
   sys.dbms_output.put_line('15.03.2013 - Add archive flag processing to add subpartition processing');
   sys.dbms_output.put_line('22.03.2013 - Add archive insert script to incrementally populate archive tables');
   sys.dbms_output.put_line('27.03.2013 - Global Partition Index Archive/Purge fix');
+  sys.dbms_output.put_line('15.04.2013 - Support for Oracle Timestamp column type added');
   dbms_application_info.set_module(module_name=>l_module, action_name=>l_action);
 END history;
 
@@ -405,11 +407,18 @@ BEGIN
   IF l_ptver >= '8.48' THEN
     l_logging := 'N';
     --10.12.2010 in PT8.50 bit 5 of database options is used for something else, so just look at bit 1
-    EXECUTE IMMEDIATE 'SELECT BITAND(database_options,2) FROM psstatus' INTO l_database_options;
+    --15.4.2013 - bit 1 indicates CLOB/BLOB usage and character semantics for unicode, bit 5 indicate timestamp for time and datatime fields.
+    EXECUTE IMMEDIATE 'SELECT database_options FROM psstatus' INTO l_database_options;
 
-    IF l_database_options = 2 THEN
+    IF BITAND(l_database_options,2) = 2 THEN
       l_unicode_enabled := 0; /*6.9.2007:character semantics*/
       l_longtoclob := 'Y'; /*use clobs*/              
+    END IF;
+
+    IF BITAND(l_database_options,32) = 32 THEN
+      l_use_timestamp := TRUE;
+    ELSE
+      l_use_timestamp := FALSE;
     END IF;
 
     IF l_desc_index IS NULL THEN
@@ -537,8 +546,8 @@ BEGIN
   dbms_application_info.read_module(module_name=>l_module, action_name=>l_action);
   set_action(p_action_name=>'GFC_PS_TABLES');
 
-  INSERT INTO gfc_ps_tables
-  (recname, rectype, table_name, table_type, temptblinstances, override_schema)
+  MERGE INTO gfc_ps_tables u --19.4.2013 converted to merge statement
+  USING (
   SELECT  r.recname, r.rectype
   ,       DECODE(r.sqltablename,' ','PS_'||r.recname,r.sqltablename) table_name
   ,       'P' table_type
@@ -600,9 +609,16 @@ BEGIN
           )
   AND     (t.recname LIKE p_recname OR p_recname IS NULL)
   AND     (p_rectype IN('A','T') OR p_rectype IS NULL)
-  MINUS --exclude any tables already added to table
-  SELECT  recname, rectype, table_name, table_type, temptblinstances, override_schema
-  FROM  gfc_ps_tables
+  ) s
+  ON (u.recname = s.recname)
+  WHEN MATCHED THEN UPDATE 
+  SET  u.rectype          = s.rectype
+  ,    u.table_name       = s.table_name
+  ,    u.temptblinstances = s.temptblinstances
+  ,    u.override_schema  = s.override_schema
+  WHEN NOT MATCHED THEN INSERT 
+         (u.recname, u.rectype, u.table_name, u.table_type, u.temptblinstances, u.override_schema)
+  VALUES (s.recname, s.rectype, s.table_name, s.table_type, s.temptblinstances, s.override_schema)
   ;
 
 -----------------------------------------------------------------------------------------------------------
@@ -1092,7 +1108,11 @@ END gfc_ps_keydefn;
                                 END IF;
                         END IF;
                 ELSIF p_dbfield.fieldtype IN(4,5,6) THEN
-                        l_datatype := 'DATE';
+ 			IF p_dbfield.fieldtype IN(5,6) AND l_use_timestamp AND l_ptver >= 8.50 AND l_oraver >= 10.0 THEN
+                        	l_datatype := 'TIMESTAMP'; --15.4.2013 time and datetime columns created as timestamp from Apps 9.2 from PT8.50
+			ELSE
+                        	l_datatype := 'DATE';
+			END IF;
                 ELSIF p_dbfield.fieldtype = 2 THEN
                         IF p_dbfield.decimalpos > 0 THEN
                                 l_datatype := 'DECIMAL';
@@ -4575,7 +4595,7 @@ END split_tab_parts;
 
 	                        ins_line(k_alter,'BEGIN'); /*1.10.2010 insert in PL/SQL block*/
 	                        ins_line(k_alter,'INSERT /*'||l_hint||'*/ INTO '
-                                                       ||LOWER(l_schema||'gfc_'||p_tables.recname)||' t (');
+                                                       ||LOWER(l_schema||'ps_'||p_tables.recname)||' t ('); --19.4.2013 insert into PS not GFC
 	                        tab_col_list(k_alter,p_tables.recname,p_column_name=>TRUE);
 	                        ins_line(k_alter,') SELECT '||l_hint2);
 	                        tab_col_list(k_alter,p_tables.recname,p_tables.src_table_name,p_column_name=>FALSE);
@@ -5806,7 +5826,7 @@ BEGIN
          dbname;
          ptver;
 
-  IF p_recname IS NULL AND p_rectype = 'A' THEN --only clear output tables before generating all records
+  IF p_part_id IS NULL AND p_recname IS NULL AND p_rectype = 'A' THEN --only clear output tables before generating all records
           truncate_tables;
   END IF;
 
