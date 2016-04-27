@@ -1,0 +1,17 @@
+gfcbuild.sql
+gfcbuildone.sql
+gfcbuildpkg.sql
+gfcbuildpkgbody.sql
+gfcbuildpkgbody.plb
+gfcbuildpriv.sql
+gfcbuildspool.sql
+gfcbuildtab.sql
+gfc_partdata_pkg.sql
+gfc_partdata_pkg.GL.sql
+gfc_partdata_pkg.GP.sql
+gpstrmit.sql
+strmvols.sql
+wrapit.bat
+xchg_privs.sql
+gfc_pspart.manual.pdf
+distrib.txt
