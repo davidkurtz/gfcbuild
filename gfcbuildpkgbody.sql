@@ -8,10 +8,18 @@ spool gfcbuildpkgbody
 -----------------------------------------------------------------------------------------------------------
 --Source Code
 -----------------------------------------------------------------------------------------------------------
+--Debug Levels
 --5:default debug level
 --6:print output
 --7:print end of procedure reset action
 --9:debug for INS_LINE
+-----------------------------------------------------------------------------------------------------------
+--Spool Files
+--0:gfcbuild - build peoplesoft tables
+--1:gfcindex - rebuild all indexes
+--2:gfcstats - generate CBO stats
+--3:gfcalter - alter main tables, add/split partitions, insert from source table
+--4:gfcarch  - archive build script
 -----------------------------------------------------------------------------------------------------------
 CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
 
@@ -86,6 +94,30 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
 		debug_msg(p_text=>'Resetting action to: '||p_action_name,p_debug_level=>p_debug_level);		
 	END;
 
+--display debug code
+        PROCEDURE debug(p_message VARCHAR2) IS
+		l_module VARCHAR2(48);
+		l_action VARCHAR2(32);
+	BEGIN
+		dbms_application_info.read_module(module_name=>l_module, action_name=>l_action);
+		set_action(p_action_name=>'DEBUG');
+
+                IF l_debug THEN
+                        sys.dbms_output.put_line(p_message);
+                END IF;
+
+		unset_action(p_action_name=>l_action);
+        END;
+
+        FUNCTION show_bool(p_bool BOOLEAN) RETURN VARCHAR IS
+	BEGIN
+		IF p_bool THEN
+			RETURN 'TRUE';
+		ELSE
+			RETURN 'FALSE';
+		END IF;
+        END show_bool;
+
 --version history --need an array
         PROCEDURE history IS
 		l_module VARCHAR2(48);
@@ -137,6 +169,8 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
 		sys.dbms_output.put_line('16.01.2011 - Optionally use database parallelism to copy tables by adding hints');
 		sys.dbms_output.put_line('29.03.2011 - Add parameter to move data from default to new list partition');
 		sys.dbms_output.put_line('26.05.2011 - Add support for partitioned index organised tables');
+		sys.dbms_output.put_line('14.07.2011 - Add support for partition archive management');
+		sys.dbms_output.put_line('08.03.2012 - Support for partitioning PeopleSoft history tables');
 		dbms_application_info.set_module(module_name=>l_module, action_name=>l_action);
 	END;
 
@@ -337,21 +371,6 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
 		unset_action(p_action_name=>l_action);
         END;
 
---display debug code
-        PROCEDURE debug(p_message VARCHAR2) IS
-		l_module VARCHAR2(48);
-		l_action VARCHAR2(32);
-	BEGIN
-		dbms_application_info.read_module(module_name=>l_module, action_name=>l_action);
-		set_action(p_action_name=>'DEBUG');
-
-                IF l_debug THEN
-                        sys.dbms_output.put_line(p_message);
-                END IF;
-
-		unset_action(p_action_name=>l_action);
-        END;
-
 --make a project of the interested tables
         PROCEDURE gfc_project(p_projectname VARCHAR2 DEFAULT '') IS
                 l_version INTEGER;
@@ -466,7 +485,7 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
 
                 INSERT INTO gfc_ps_tables
                 (recname, rectype, table_name, table_type, temptblinstances, override_schema)
-                SELECT  r.recname, r.rectype,
+                SELECT  DISTINCT r.recname, r.rectype,
                         DECODE(r.sqltablename,' ','PS_'||r.recname,r.sqltablename) table_name,
                         'P' table_type
 		,	0 temptblinstances
@@ -474,8 +493,10 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
                 FROM    psrecdefn r
                 ,       gfc_part_tables p
                 WHERE   r.rectype = 0
-                AND     r.recname = p.recname
-		AND	(p.recname LIKE p_recname OR p_recname IS NULL)
+                AND     r.recname IN(p.recname,p.arch_recname) --added 7.3.2012
+		AND	(   p.recname LIKE p_recname 
+		         OR p.arch_recname LIKE p_recname 
+                         OR p_recname IS NULL)
 		AND	(p_rectype IN('A','P') OR p_rectype IS NULL)
                 UNION ALL
                 SELECT  r.recname, r.rectype
@@ -499,6 +520,9 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
 		        )
 		AND	(t.recname LIKE p_recname OR p_recname IS NULL)
 		AND	(p_rectype IN('A','T') OR p_rectype IS NULL)
+		MINUS
+		SELECT	recname, rectype, table_name, table_type, temptblinstances, override_schema
+		FROM	gfc_ps_tables
                 ;
 
 -----------------------------------------------------------------------------------------------------------
@@ -541,15 +565,24 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
                 SELECT c.table_name, c.column_name, c.column_id
                 FROM   user_tab_columns c
                 ,      gfc_ps_tables g
+                ,      gfc_part_tables p
                 WHERE  g.table_name = c.table_name
-		AND    (g.recname LIKE p_recname OR p_recname IS NULL) 
+		AND    g.recname = p.recname
+		AND    (  p.recname LIKE p_recname 
+		       OR p.arch_recname LIKE p_recname 
+                       OR p_recname IS NULL)
+		AND NOT EXISTS(
+			SELECT 'x'
+			FROm	gfc_ora_tab_columns o
+			WHERE	o.table_name = c.table_name
+			AND 	o.column_name = c.column_name)
                 ;
 
 		unset_action(p_action_name=>l_action);
         END;
 
 --populate table of columns
-        PROCEDURE gfc_ps_tab_columns 
+        PROCEDURE gfc_ps_tab_columns
 	(p_recname VARCHAR2 DEFAULT ''
 	) IS
 		l_module VARCHAR2(48);
@@ -560,11 +593,20 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
 
                 INSERT INTO gfc_ps_tab_columns
                 (       recname, fieldname, useedit, fieldnum, subrecname)
-                SELECT  r.recname, f.fieldname, f.useedit, f.fieldnum, r.recname
+                SELECT  r.recname, f.fieldname, f.useedit, f.fieldnum, f.recname_parent
                 FROM    gfc_ps_tables r
-                ,       psrecfield f
+		,	gfc_part_tables p
+                ,       psrecfielddb f
                 WHERE   r.recname = f.recname
-		AND     (r.recname LIKE p_recname OR p_recname IS NULL) 
+		And	r.recname = p.recname
+		AND    (  p.recname LIKE p_recname 
+		       OR p.arch_recname LIKE p_recname 
+                       OR p_recname IS NULL)
+                AND NOT EXISTS(
+			SELECT 'x'
+			FROM	gfc_ps_tab_columns c
+			WHERE 	c.recname = r.recname
+			AND	c.fieldname = f.fieldname)
                 ;
 
 		unset_action(p_action_name=>l_action);
@@ -665,7 +707,7 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
 	BEGIN
 		dbms_application_info.read_module(module_name=>l_module, action_name=>l_action);
 		set_action(p_action_name=>'GFC_PS_KEYDEFN');
-		debug_msg('(recname='||p_recname||')');
+		debug_msg('(recname='||p_recname||')',8);
 
 		MERGE INTO gfc_ps_keydefn u USING ( --16.6.2010 rewritten as merge
 --insert unique and user indexes
@@ -697,7 +739,7 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
 		VALUES
 		(s.recname, s.indexid, s.keyposn, s.fieldname, s.ascdesc)
 		;
-		debug_msg('merged '||SQL%ROWCOUNT||' rows');
+		debug_msg('merged '||SQL%ROWCOUNT||' rows',8);
 
 
 --30.6.2005-remove special processing columns
@@ -720,7 +762,7 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
 			AND	(j.recname LIKE p_recname OR p_recname IS NULL) 
 			)
                 ;
-		debug_msg('update position on '||SQL%ROWCOUNT||' rows');
+		debug_msg('update position on '||SQL%ROWCOUNT||' rows',8);
 
 
 --remove descending key option on partition and subpartition columns 23.1.2009
@@ -743,7 +785,7 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
 			AND	ROWNUM <= 1
 			)
 		;
-		debug_msg('update key direction '||SQL%ROWCOUNT||' rows');
+		debug_msg('update key direction '||SQL%ROWCOUNT||' rows',8);
 
 
 		unset_action(p_action_name=>l_action);
@@ -780,14 +822,14 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
                                 FETCH c_sbr_col INTO p_sbr_col;
                                 EXIT WHEN c_sbr_col%NOTFOUND;
 
-                                debug(l_last_recname||'/'||p_sbr_col.recname||'/'||l_fieldnum_adj);
+                                debug_msg(l_last_recname||'/'||p_sbr_col.recname||'/'||l_fieldnum_adj,8);
                                 IF (l_last_recname != p_sbr_col.recname OR l_last_recname IS NULL) THEN
                                         l_fieldnum_adj := 0;
                                         l_last_recname := p_sbr_col.recname;
                                 END IF;
 
-                                debug(p_sbr_col.recname||'/'|| p_sbr_col.fieldnum||'/'|| 
-                                      p_sbr_col.fieldname||'/'|| l_fieldnum_adj);
+                                debug_msg(p_sbr_col.recname||'/'|| p_sbr_col.fieldnum||'/'|| 
+                                      p_sbr_col.fieldname||'/'|| l_fieldnum_adj,8);
 
                                 l_found_sbr := l_found_sbr +1;
 
@@ -879,7 +921,7 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
 
 --generate the column definition clause for create table DDL
         FUNCTION col_def(p_recname VARCHAR2, p_fieldname VARCHAR2, p_longtoclob VARCHAR) RETURN VARCHAR2 IS
-                l_col_def VARCHAR2(80 CHAR);
+                l_col_def VARCHAR2(100 CHAR);
 
                 CURSOR c_dbfield (p_fieldname VARCHAR2) IS
                 SELECT  *
@@ -973,27 +1015,71 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
 
 		unset_action(p_action_name=>l_action);
                 RETURN l_col_def;
-        END;
+        END col_def;
 
 --insert line of script into table
         PROCEDURE ins_line(p_type NUMBER, p_line VARCHAR2) IS
 --              PRAGMA AUTONOMOUS_TRANSACTION;
 		l_module VARCHAR2(48);
 		l_action VARCHAR2(32);
+
+		l_line VARCHAR2(4000);
+		l_char VARCHAR2(1);
+		l_last_char VARCHAR2(1);
+		l_length INTEGER;
+		l_pos INTEGER;
+		l_last_break INTEGER;
+		l_inquote BOOLEAN := FALSE;
 	BEGIN
 		dbms_application_info.read_module(module_name=>l_module, action_name=>l_action);
 		set_action(p_action_name=>'INS_LINE',p_debug_level=>9);
 
+		--if string longer than threshold (100 chars) calculate position of last not in quote space, and cut string there.  
+ 		--Keep cutting until string less than 100 chars and position > 0
+		l_pos := 0;
+		l_last_break := 0;
+		l_line := RTRIM(p_line);
+		l_length := LENGTH(l_line);
+                debug_msg('l_length='||l_length,9);
+		WHILE l_length >= 100 LOOP
+			l_pos := l_pos + 1;
+			l_last_char := l_char;
+			l_char := SUBSTR(l_line,l_pos,1);
+			IF NOT l_inquote AND INSTR(', ',l_last_char)>0 THEN
+				l_last_break := l_pos-1;
+				debug_msg('Break Point at position '||l_last_break,9);
+			END IF;
+			IF l_char = '''' THEN
+				IF l_inquote THEN
+					l_inquote := FALSE;
+				ELSE
+					l_inquote := TRUE;
+				END IF;
+			END IF;
+                        debug_msg(l_char||'@'||l_pos||':l_last_break='||l_last_break||':l_inquote='||show_bool(l_inquote),9);
+			IF l_pos >= l_length THEN
+				EXIT;
+			ELSIF l_pos >= 100 AND l_last_break > 0 THEN
+		                l_lineno := l_lineno + 1;
+		                EXECUTE IMMEDIATE 'INSERT INTO gfc_ddl_script VALUES(:p_type, :l_lineno, :l_line)'
+				USING p_type, l_lineno, SUBSTR(l_line,1,l_last_break);
+				debug_msg('Break Line @ '||l_last_break||':'||TO_CHAR(p_type)||':'||TO_CHAR(l_lineno)||':'||l_length||' chars:'||SUBSTR(l_line,1,l_last_break)||'...',8);
+
+				l_line := SUBSTR(l_line,l_last_break+1);
+				l_length := LENGTH(l_line);
+				l_pos := l_pos - l_last_break;
+				l_last_break := 0;
+			END IF;
+		END LOOP;
+
                 l_lineno := l_lineno + 1;
-
-                EXECUTE IMMEDIATE 'INSERT INTO gfc_ddl_script VALUES(:p_type, :l_lineno, :p_line)'
-		USING p_type, l_lineno, p_line;
-
-		debug_msg(TO_CHAR(p_type)||':'||TO_CHAR(p_line)||':'||p_line,6);
+                EXECUTE IMMEDIATE 'INSERT INTO gfc_ddl_script VALUES(:p_type, :l_lineno, :l_line)'
+		USING p_type, l_lineno, l_line;
+		debug_msg(TO_CHAR(p_type)||':'||TO_CHAR(l_lineno)||':'||l_length||' chars:'||l_line,8);
 
 --              COMMIT;
 		unset_action(p_action_name=>l_action,p_debug_level=>9);
-        END;
+        END ins_line;
 
 --insert line of script into table
         PROCEDURE debug_line(p_type NUMBER, p_line VARCHAR2) IS
@@ -1052,7 +1138,7 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
 		dbms_application_info.read_module(module_name=>l_module, action_name=>l_action);
 		set_action(p_action_name=>'SIGNATURE');
 
-		ins_line(p_type,'REM Generated by GFC_PSPART - (c)Go-Faster Consultancy Ltd. www.go-faster.co.uk 2001-2011');
+		ins_line(p_type,'REM Generated by GFC_PSPART - (c)Go-Faster Consultancy Ltd. www.go-faster.co.uk 2001-2012');
                 ins_line(p_type,'REM '||l_dbname||' @ '||TO_CHAR(sysdate,'HH24:MI:SS DD.MM.YYYY'));
                 whenever_sqlerror(p_type,p_error);
                 ins_line(p_type,'');
@@ -1084,12 +1170,15 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
 		unset_action(p_action_name=>l_action);
         END;
 --generate commands to rename table partititons
-        PROCEDURE rename_parts(p_table_name VARCHAR2, p_drop_index VARCHAR2) IS
+        PROCEDURE rename_parts(p_type INTEGER DEFAULT 0
+                              ,p_table_name VARCHAR2
+                              ,p_drop_index VARCHAR2) IS
                 CURSOR c_tab_parts(p_table_name VARCHAR2) IS
                 SELECT  DISTINCT 'ALTER TABLE '||LOWER(l_schema2||utp.table_name)||' RENAME PARTITION '
                                  ||LOWER(utp.partition_name)||' TO old_'||LOWER(utp.partition_name)||';' rename_cmd
                 FROM    user_tab_partitions utp
                 WHERE   utp.table_name = p_table_name
+		AND     SUBSTR(utp.partition_name,1,4) != 'OLD_'
 		ORDER BY 1
                 ;
 
@@ -1100,6 +1189,7 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
                 ,       user_part_indexes upi
                 WHERE   uip.index_name = upi.index_name
                 AND     upi.table_name = p_table_name
+		AND     SUBSTR(uip.partition_name,1,4) != 'OLD_'
 		ORDER BY 1
                 ;
 
@@ -1122,16 +1212,16 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
 		dbms_application_info.read_module(module_name=>l_module, action_name=>l_action);
 		set_action(p_action_name=>'RENAME_PARTS');
 
-		whenever_sqlerror(0,FALSE);
+		whenever_sqlerror(p_type,FALSE);
                 OPEN c_tab_parts(p_table_name);
                 LOOP
                         FETCH c_tab_parts INTO p_tab_parts;
                         EXIT WHEN c_tab_parts%NOTFOUND;
 
-                        ins_line(0,p_tab_parts.rename_cmd);
+                        ins_line(p_type,p_tab_parts.rename_cmd);
                 END LOOP;
                 CLOSE c_tab_parts;
-                ins_line(0,'');
+                ins_line(p_type,'');
 
                 IF p_drop_index = 'Y' THEN
                         OPEN c_drop_idx(p_table_name);
@@ -1139,7 +1229,7 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
                                 FETCH c_drop_idx INTO p_drop_idx;
                                 EXIT WHEN c_drop_idx%NOTFOUND;
 
-                                ins_line(0,p_drop_idx.drop_cmd);
+                                ins_line(p_type,p_drop_idx.drop_cmd);
                         END LOOP;
                         CLOSE c_drop_idx;
                 ELSE
@@ -1148,33 +1238,40 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
                                 FETCH c_idx_parts INTO p_idx_parts;
                                 EXIT WHEN c_idx_parts%NOTFOUND;
 
-                                ins_line(0,p_idx_parts.rename_cmd);
+                                ins_line(p_type,p_idx_parts.rename_cmd);
                         END LOOP;
                         CLOSE c_idx_parts;
                 END IF;
 		whenever_sqlerror(0,TRUE);
-                ins_line(0,'');
+                ins_line(p_type,'');
 
 		unset_action(p_action_name=>l_action);
-        END;
+        END rename_parts;
 
 --generate commands to rename table partititons
-        PROCEDURE rename_subparts (p_table_name VARCHAR2, p_drop_index VARCHAR2) IS
+        PROCEDURE rename_subparts(p_type INTEGER DEFAULT 0
+                                 ,p_table_name VARCHAR2
+                                 ,p_part_name  VARCHAR2 DEFAULT ''
+                                 ,p_drop_index VARCHAR2 DEFAULT 'N') IS
                 CURSOR c_tab_subparts (p_table_name VARCHAR2) IS
-                SELECT  DISTINCT 'ALTER TABLE '||LOWER(l_schema2||utp.table_name)||' RENAME PARTITION '
+                SELECT  DISTINCT 'ALTER TABLE '||LOWER(l_schema2||utp.table_name)||' RENAME SUBPARTITION '
                                  ||LOWER(utp.subpartition_name)||' TO old_'||LOWER(utp.subpartition_name)||';' rename_cmd
                 FROM    user_tab_subpartitions utp
                 WHERE   utp.table_name = p_table_name
+                AND    (utp.partition_name LIKE p_part_name OR p_part_name IS NULL)
+		AND     SUBSTR(utp.subpartition_name,1,4) != 'OLD_'
                 ORDER BY 1
                 ;
 
                 CURSOR c_idx_subparts (p_table_name VARCHAR2) IS
-                SELECT  DISTINCT 'ALTER INDEX '||LOWER(l_schema2||uip.index_name)||' RENAME PARTITION '
+                SELECT  DISTINCT 'ALTER INDEX '||LOWER(l_schema2||uip.index_name)||' RENAME SUBPARTITION '
                         ||LOWER(uip.subpartition_name)||' TO old_'||LOWER(uip.subpartition_name)||';' rename_cmd
                 FROM    user_ind_subpartitions uip
                 ,       user_part_indexes upi
-                WHERE   uip.index_name = upi.index_name
-                AND     upi.table_name = p_table_name
+                WHERE   upi.table_name = p_table_name
+                AND     uip.index_name = upi.index_name
+                AND    (uip.partition_name LIKE p_part_name OR p_part_name IS NULL)
+		AND     SUBSTR(uip.subpartition_name,1,4) != 'OLD_'
                 ORDER BY 1
                 ;
 
@@ -1196,17 +1293,21 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
 	BEGIN
 		dbms_application_info.read_module(module_name=>l_module, action_name=>l_action);
 		set_action(p_action_name=>'RENAME_SUBPARTS');
+		debug_msg('RENAME_SUBPARTS:type='||p_type
+					||'/table='||p_table_name
+					||'/part_name='||p_part_name
+					||'/drop_index='||p_drop_index,6);
 
-		whenever_sqlerror(0,FALSE);
+		whenever_sqlerror(p_type,FALSE);
                 OPEN c_tab_subparts(p_table_name);
                 LOOP
                         FETCH c_tab_subparts INTO p_tab_subparts;
                         EXIT WHEN c_tab_subparts%NOTFOUND;
 
-                        ins_line(0,p_tab_subparts.rename_cmd);
+                        ins_line(p_type,p_tab_subparts.rename_cmd);
                 END LOOP;
                 CLOSE c_tab_subparts;
-                ins_line(0,'');
+                ins_line(p_type,'');
 
                 IF p_drop_index = 'Y' THEN
                         OPEN c_drop_idx(p_table_name);
@@ -1214,7 +1315,7 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
                                 FETCH c_drop_idx INTO p_drop_idx;
                                 EXIT WHEN c_drop_idx%NOTFOUND;
 
-                                ins_line(0,p_drop_idx.drop_cmd);
+                                ins_line(p_type,p_drop_idx.drop_cmd);
                         END LOOP;
                         CLOSE c_drop_idx;
                 ELSE
@@ -1223,15 +1324,15 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
                                 FETCH c_idx_subparts INTO p_idx_subparts;
                                 EXIT WHEN c_idx_subparts%NOTFOUND;
 
-                                ins_line(0,p_idx_subparts.rename_cmd);
+                                ins_line(p_type,p_idx_subparts.rename_cmd);
                         END LOOP;
                         CLOSE c_idx_subparts;
                 END IF;
-		whenever_sqlerror(0,TRUE);
-                ins_line(0,'');
+		whenever_sqlerror(p_type,TRUE);
+                ins_line(p_type,'');
 
 		unset_action(p_action_name=>l_action);
-        END;
+        END rename_subparts;
 
 --list indexed columns
         PROCEDURE ind_cols(p_type NUMBER, p_recname VARCHAR2, p_indexid VARCHAR2, p_desc_index VARCHAR2) IS
@@ -1253,7 +1354,7 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
                 ;
 
                 p_ind_cols c_ind_cols%ROWTYPE;
-                l_col_def VARCHAR2(50 CHAR);
+                l_col_def VARCHAR2(100 CHAR);
                 l_counter INTEGER := 0;
 		l_module VARCHAR2(48);
 		l_action VARCHAR2(32);
@@ -1330,8 +1431,11 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
         END;
 
 --list columns in table for column list in create table DDL
-        PROCEDURE tab_col_list(p_recname     VARCHAR2
+        PROCEDURE tab_col_list(p_type        INTEGER
+                              ,p_recname     VARCHAR2
+	                      ,p_table_name  VARCHAR2 DEFAULT NULL
 	                      ,p_column_name BOOLEAN DEFAULT TRUE) IS
+                --cursor lists columns in record, returns column name on specified table (or matching record if not specified) 
                 CURSOR c_tab_cols(p_recname VARCHAR2) IS
                 SELECT  g.*, c.column_name
                 FROM    (
@@ -1344,29 +1448,48 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
 			) g
 			LEFT OUTER JOIN gfc_ora_tab_columns c
 				ON c.column_name = g.fieldname
-				AND c.table_name = DECODE(g.sqltablename,' ','PS_'||g.recname,g.sqltablename)
+				AND c.table_name = NVL(UPPER(p_table_name),DECODE(g.sqltablename,' ','PS_'||g.recname,g.sqltablename))
                         WHERE   g.recname = p_recname
                         ORDER BY g.recname, g.fieldnum
                         ;
                 p_tab_cols c_tab_cols%ROWTYPE;
-                l_col_def VARCHAR2(100 CHAR);
+                l_col_def VARCHAR2(1000 CHAR);
 		l_module VARCHAR2(48);
 		l_action VARCHAR2(32);
 	BEGIN
 		dbms_application_info.read_module(module_name=>l_module, action_name=>l_action);
 		set_action(p_action_name=>'TAB_COL_LIST');
 
+		debug_msg('TAB_COL_LIST:type='||p_type
+                                     ||'/recname='||p_recname
+                                     ||'/table_name='||p_table_name
+                                     ||'/column_name='||show_bool(p_column_name)
+                                     ,6);
+
                 OPEN c_tab_cols(p_recname);
                 LOOP
                         FETCH c_tab_cols INTO p_tab_cols;
                         EXIT WHEN c_tab_cols%NOTFOUND;
+	
+			debug_msg('fieldnum='||p_tab_cols.fieldnum
+                                     ||'/fieldname='||p_tab_cols.fieldname
+                                     ||'/column_name='||p_tab_cols.column_name
+                                     ,7);
 
-                        IF p_tab_cols.fieldnum > 1 THEN
+                        IF p_tab_cols.fieldnum=1 THEN
+                                l_col_def := '';
+ 			ELSE
                                 l_col_def := l_col_def||',';
                         END IF;
 			
 			IF p_column_name OR p_tab_cols.column_name IS NOT NULL THEN --22.1.2007 - to handle new columns not in table
 	                        l_col_def := l_col_def||LOWER(p_tab_cols.fieldname);
+			ELSIF p_tab_cols.subrecname = 'PSARCHIVE_SBR' THEN --special processing for PS archive tables
+				IF p_tab_cols.fieldtype IN(0) THEN -- character
+					l_col_def := l_col_def||'''&'||'&'||p_tab_cols.fieldname||'''';
+				ELSE
+					l_col_def := l_col_def||'&'||'&'||p_tab_cols.fieldname;
+				END IF;
 			ELSIF p_tab_cols.fieldtype = 0 THEN -- character
 				l_col_def := l_col_def||''' ''';
 			ELSIF p_tab_cols.fieldtype IN(2,3) THEN -- numeric
@@ -1385,15 +1508,18 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
 				END IF;
 			END IF; --22.1.2007 - end of new column handling 
 
-                        IF LENGTH(l_col_def) >= 80 THEN
-                                ins_line(0,l_col_def);
+                        IF LENGTH(l_col_def) >= 950 THEN
+                                ins_line(p_type,l_col_def);
+				debug_msg('col_def='||l_col_def,7);
                                 l_col_def := '';
                         END IF;
                 END LOOP;
                 IF LENGTH(l_col_def) > 0 THEN
-                        ins_line(0,l_col_def);
+                        ins_line(p_type,l_col_def);
+			debug_msg('col_def='||l_col_def,7);
                 END IF;
                 CLOSE c_tab_cols;
+		unset_action(p_action_name=>l_action);
         END;
 
 --6.9.2007 substituate table storage variables in same way as Peoplesoft
@@ -1424,6 +1550,7 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
 			l_storage := replace(l_storage,c_tab_storage.parmname,c_tab_storage.parmvalue);
 		END LOOP;
 
+		unset_action(p_action_name=>l_action);
 		RETURN l_storage;
 	END;
 
@@ -1473,7 +1600,9 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
 
 --generate partition clause on the basis of part ranges table
         PROCEDURE tab_listparts(p_type NUMBER, p_recname VARCHAR2
-                               ,p_part_id VARCHAR2, p_part_name VARCHAR2) IS --19.3.2010 added subpart
+                               ,p_part_id VARCHAR2, p_part_name VARCHAR2
+			       ,p_part_basename VARCHAR2
+                               ,p_arch_flag VARCHAR2 DEFAULT 'N') IS --19.3.2010 added subpart
                 l_part_def VARCHAR2(400 CHAR);
                 l_counter INTEGER := 0;
 		l_module VARCHAR2(48);
@@ -1482,7 +1611,11 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
 		dbms_application_info.read_module(module_name=>l_module, action_name=>l_action);
 		set_action(p_action_name=>'TAB_LISTPARTS');
 
-		debug('TAB_LISTPARTS:'||p_recname||'/'||p_part_id);
+		debug_msg('TAB_LISTPARTS:recname='||p_recname
+                                     ||'/part_id='||p_part_id
+                                     ||'/part_name='||p_part_name
+                                     ||'/part_basename='||p_part_basename
+                                     ,6);
 
                 --12.2.2008 restrict combinations of partitions
 		FOR t IN(
@@ -1493,6 +1626,7 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
 			AND	b.range_name = p_part_name
 			AND     b.list_name = a.part_name
 			AND     b.build = 'Y' --if subpartition to be built in range partition
+			AND    (a.arch_flag = p_arch_flag OR p_arch_flag IS NULL)
 			ORDER BY a.part_name
 		) LOOP
 			IF l_counter = 0 THEN
@@ -1500,7 +1634,8 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
 			ELSE
 				l_part_def := ',';
 			END IF;
-			l_part_def := l_part_def||'SUBPARTITION '||LOWER(p_recname||'_'||p_part_name||'_'||t.part_name);
+			l_part_def := l_part_def||'SUBPARTITION '||LOWER(p_part_basename
+						||'_'||p_part_name||'_'||t.part_name);
 			ins_line(p_type,l_part_def);
 
 			l_part_def := ' VALUES ('||t.list_value||')';
@@ -1515,8 +1650,8 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
                         END IF;
 			IF l_part_def IS NOT NULL THEN
 				debug(l_part_def);
+	                        ins_line(p_type,l_part_def);
 			END IF;
-                        ins_line(p_type,l_part_def);
 			l_counter := l_counter + 1;
 		END LOOP;
 		IF l_counter > 0 THEN
@@ -1537,7 +1672,7 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
 		dbms_application_info.read_module(module_name=>l_module, action_name=>l_action);
 		set_action(p_action_name=>'IDX_LISTPARTS');
 
-		debug('idx_listparts:'||p_recname||'/'||p_indexid||'/'||p_part_id);
+		debug_msg('idx_listparts:'||p_recname||'/'||p_indexid||'/'||p_part_id,6);
 
                 --12.2.2008 restrict combinations of partitions
 		FOR t IN(
@@ -1567,8 +1702,10 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
                                 l_part_def := l_part_def||' '||
 				              idx_storage(p_recname, p_indexid, t.idx_storage);
                         END IF;
-			debug(l_part_def);
-                        ins_line(p_type,l_part_def);
+			IF l_part_def IS NOT NULL THEN
+				debug(l_part_def);
+        	                ins_line(p_type,l_part_def);
+			END IF;
 			l_counter := l_counter + 1;
 		END LOOP;
 		IF l_counter > 0 THEN
@@ -1579,15 +1716,11 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
         END;
 
 --generate partition clause on the basis of part ranges table
-        PROCEDURE tab_part_ranges(p_recname VARCHAR2, p_part_id VARCHAR2, 
-		            p_subpart_type VARCHAR2, p_subpartitions INTEGER) IS
-                CURSOR c_tab_part_ranges(p_recname VARCHAR2) IS
-                SELECT *
-                FROM gfc_part_ranges r
-                WHERE r.part_id = p_part_id
-                ORDER BY part_no, part_name;
-
-                p_tab_part_ranges c_tab_part_ranges%ROWTYPE;
+        PROCEDURE tab_part_ranges(p_type NUMBER, p_recname VARCHAR2, p_part_id VARCHAR2, 
+		                  p_subpart_type VARCHAR2, p_subpartitions INTEGER,
+			          p_arch_flag VARCHAR2 DEFAULT 'N', 
+                                  p_owner VARCHAR2, p_table_name VARCHAR2,
+	                          p_part_name VARCHAR2 DEFAULT '') IS
                 l_part_def VARCHAR2(200 CHAR);
                 l_counter INTEGER := 0;
                 l_subpartition INTEGER;
@@ -1597,12 +1730,29 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
 		dbms_application_info.read_module(module_name=>l_module, action_name=>l_action);
 		set_action(p_action_name=>'TAB_PART_RANGES');
 
-		debug('tab_part_ranges:'||p_recname||'/'||p_part_id||'/'||p_subpart_type);
-                OPEN c_tab_part_ranges(p_recname);
-                LOOP
-                        FETCH c_tab_part_ranges INTO p_tab_part_ranges;
-			debug('Part Range:'||p_tab_part_ranges.part_No||'/'||p_tab_part_ranges.part_name);
-                        EXIT WHEN c_tab_part_ranges%NOTFOUND;
+		debug_msg('tab_part_ranges:'||p_type||'/'||p_recname
+ 			||'/part_id='||p_part_id
+ 			||'/subpart_type='||p_subpart_type
+			||'/subpartititons='||p_subpartitions
+			||'/arch_flag='||p_arch_flag
+			||'/'||p_owner||'./'||p_table_name,6);
+
+                FOR p_tab_part_ranges IN(
+	                SELECT r.*
+        	        FROM  gfc_part_ranges r
+                	WHERE r.part_id = p_part_id
+			AND   (r.arch_flag = p_arch_flag 
+			      OR p_arch_flag IS NULL
+			      OR EXISTS (
+				SELECT 'x' 
+				FROM  dba_tab_partitions p
+				WHERE p.table_name = UPPER(p_table_name)
+				AND   p.table_owner = UPPER(p_owner)
+				AND   p.partition_name = UPPER(p_recname||'_'||r.part_name)
+				))
+	                ORDER BY r.part_no, r.part_name
+                ) LOOP
+			debug_msg('Part Range:'||p_tab_part_ranges.part_no||'/'||p_tab_part_ranges.part_name,6);
 
                         l_counter := l_counter + 1;
                         IF l_counter = 1 THEN
@@ -1610,10 +1760,11 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
                         ELSE
                                 l_part_def := ',';
                         END IF;
-                        l_part_def := l_part_def||'PARTITION '||LOWER(p_recname||'_'||p_tab_part_ranges.part_name);
+                        l_part_def := l_part_def||'PARTITION '||LOWER(NVL(p_part_name,p_recname)
+			                                              ||'_'||p_tab_part_ranges.part_name);
 			l_part_def := l_part_def||' VALUES LESS THAN ('||p_tab_part_ranges.part_value||')';
 			IF LENGTH(l_part_def) > 70 THEN
-	                        ins_line(0,l_part_def);
+	                        ins_line(p_type,l_part_def);
 				l_part_def := '';
 			END IF;
                         IF p_tab_part_ranges.tab_tablespace IS NOT NULL THEN
@@ -1623,7 +1774,7 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
                                 l_part_def := l_part_def||' '||tab_storage(p_recname, p_tab_part_ranges.tab_storage); --6.9.2007
                         END IF;
 			IF LENGTH(l_part_def) > 0 THEN
-	                        ins_line(0,l_part_def);
+	                        ins_line(p_type,l_part_def);
 				l_part_def := '';
 			END IF;
                         IF p_subpart_type = 'H' AND p_subpartitions > 1 THEN
@@ -1634,30 +1785,35 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
                                                 l_part_def := ',';
                                         END IF;
                                         l_part_def := l_part_def||'SUBPARTITION '
-						||LOWER(p_recname||'_'||p_tab_part_ranges.part_name
+						||LOWER(NVL(p_part_name,p_recname)||'_'||p_tab_part_ranges.part_name
 						||'_'||LTRIM(TO_CHAR(l_subpartition,'00')));
-                                        ins_line(0,l_part_def);
+                                        ins_line(p_type,l_part_def);
                                 END LOOP;
-                                ins_line(0,')');
+                                ins_line(p_type,')');
 			ELSIF p_subpart_type = 'L' THEN
-				tab_listparts(0,p_recname,p_part_id,p_tab_part_ranges.part_name); 
+				tab_listparts(p_type=>p_type
+					,p_recname=>p_recname
+					,p_part_id=>p_part_id
+					,p_part_name=>p_tab_part_ranges.part_name
+					,p_part_basename=>NVL(p_part_name,p_recname)
+					,p_arch_flag=>p_arch_flag); 
                         END IF;
                 END LOOP;
                 IF l_counter > 0 THEN
-                        ins_line(0,')');
+                        ins_line(p_type,')');
                 END IF;
-                CLOSE c_tab_part_ranges;
 
 		unset_action(p_action_name=>l_action);
-        END;
+        END tab_part_ranges;
 
 --generate partition clause on the basis of part ranges table
-        PROCEDURE tab_part_lists(p_recname VARCHAR2, p_part_id VARCHAR2, 
-		            p_subpart_type VARCHAR2, p_subpartitions INTEGER) IS
+        PROCEDURE tab_part_lists(p_type NUMBER, p_recname VARCHAR2, p_part_id VARCHAR2, 
+		            p_subpart_type VARCHAR2, p_subpartitions INTEGER, p_arch_flag VARCHAR2 DEFAULT 'N') IS
                 CURSOR c_tab_part_lists(p_recname VARCHAR2) IS
                 SELECT *
                 FROM gfc_part_lists l
                 WHERE l.part_id = p_part_id
+                AND  (l.arch_flag = p_arch_flag OR p_arch_flag IS NULL)
                 ORDER BY part_no, part_name;
 
                 p_tab_part_lists c_tab_part_lists%ROWTYPE;
@@ -1670,11 +1826,16 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
 		dbms_application_info.read_module(module_name=>l_module, action_name=>l_action);
 		set_action(p_action_name=>'TAB_PART_LISTS');
 
-		debug('tab_part_lists:'||p_recname||'/'||p_part_id||'/'||p_subpart_type);
+		debug_msg('tab_part_lists:'||p_type
+ 			||'/recname='||p_recname
+			||'/part_id='||p_part_id
+			||'/subpart_type='||p_subpart_type
+			||'/subpartitions='||p_subpartitions
+			||'/arch_flag='||p_arch_flag,6);
                 OPEN c_tab_part_lists(p_recname);
                 LOOP
                         FETCH c_tab_part_lists INTO p_tab_part_lists;
-			debug('Part Range:'||p_tab_part_lists.part_No||'/'||p_tab_part_lists.part_name);
+			debug_msg('Part Range:'||p_tab_part_lists.part_No||'/'||p_tab_part_lists.part_name,6);
                         EXIT WHEN c_tab_part_lists%NOTFOUND;
 
                         l_counter := l_counter + 1;
@@ -1684,9 +1845,9 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
                                         l_part_def := ',';
                                 END IF;
                         l_part_def := l_part_def||'PARTITION '||LOWER(p_recname||'_'||p_tab_part_lists.part_name);
-                        ins_line(0,l_part_def);
+                        ins_line(p_type,l_part_def);
 			l_part_def := ' VALUES ('||p_tab_part_lists.list_value||')';
-                        ins_line(0,l_part_def);
+                        ins_line(p_type,l_part_def);
 			l_part_def := '';
                         IF p_tab_part_lists.tab_tablespace IS NOT NULL THEN
                                 l_part_def := l_part_def||' TABLESPACE '||p_tab_part_lists.tab_tablespace;
@@ -1695,7 +1856,7 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
                                 l_part_def := l_part_def||' '||tab_storage(p_recname, p_tab_part_lists.tab_storage); --6.9.2007
                         END IF;
 			IF LENGTH(l_part_def) > 0 THEN
-	                        ins_line(0,l_part_def);
+	                        ins_line(p_type,l_part_def);
 			END IF;
                         IF p_subpart_type = 'H' AND p_subpartitions > 1 THEN
                                 FOR l_subpartition IN 1..p_subpartitions LOOP
@@ -1707,18 +1868,18 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
                                         l_part_def := l_part_def||'SUBPARTITION '
 						||LOWER(p_recname||'_'||p_tab_part_lists.part_name
 						||'_'||LTRIM(TO_CHAR(l_subpartition,'00')));
-                                        ins_line(0,l_part_def);
+                                        ins_line(p_type,l_part_def);
                                 END LOOP;
-                                ins_line(0,')');
+                                ins_line(p_type,')');
                         END IF;
                 END LOOP;
                 IF l_counter > 0 THEN
-                        ins_line(0,')');
+                        ins_line(p_type,')');
                 END IF;
                 CLOSE c_tab_part_lists;
 
 		unset_action(p_action_name=>l_action);
-        END;
+        END tab_part_lists;
 
 --generate partition clause on the basis of part ranges table
         PROCEDURE ind_hashparts(p_type      NUMBER
@@ -1806,14 +1967,11 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
 
 --generate partition clause for create index DDL
         PROCEDURE ind_part_ranges(p_type NUMBER, p_recname VARCHAR2, p_indexid VARCHAR2, 
-                            p_part_id VARCHAR2, p_subpart_type VARCHAR2, p_subpartitions NUMBER) IS
-                CURSOR c_ind_part_ranges IS
-                SELECT *
-                FROM gfc_part_ranges r
-                WHERE r.part_id = p_part_id
-                ORDER BY part_no, part_name
-                ;
-                p_ind_part_ranges c_ind_part_ranges%ROWTYPE;
+                            p_part_id VARCHAR2, p_subpart_type VARCHAR2, p_subpartitions NUMBER,
+                            p_arch_flag VARCHAR2 DEFAULT 'N', 
+                            p_owner VARCHAR2, 
+                            p_index_prefix VARCHAR2 DEFAULT 'PS',
+	                    p_part_name VARCHAR2 DEFAULT '') IS
                 l_part_def VARCHAR2(100 CHAR);
                 l_subpartition INTEGER;
 		l_module VARCHAR2(48);
@@ -1822,13 +1980,28 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
 		dbms_application_info.read_module(module_name=>l_module, action_name=>l_action);
 		set_action(p_action_name=>'IND_PART_RANGES');
 
-                OPEN c_ind_part_ranges;
-                l_part_def := '(';
-                LOOP
-                        FETCH c_ind_part_ranges INTO p_ind_part_ranges;
-                        EXIT WHEN c_ind_part_ranges%NOTFOUND;
+		debug_msg('ind_part_ranges:'||p_type
+                        ||'/recname='||p_recname
+                        ||'/indexid='||p_indexid
+                        ||'/part_id='||p_part_id
+                        ||'/subpart_type='||p_subpart_type
+			||'/subpartitions='||p_subpartitions
+                        ||'/arch_flag='||p_arch_flag
+			||'/owner='||p_owner
+                        ||'/index_prefix='||p_index_prefix
+                        ||'/part_name='||p_part_name,6);
 
-                        l_part_def := l_part_def||'PARTITION '||LOWER(p_recname||p_indexid||p_ind_part_ranges.part_name);
+                l_part_def := '(';
+                FOR p_ind_part_ranges IN(
+	                SELECT r.*
+        	        FROM gfc_part_ranges r
+                	WHERE r.part_id = p_part_id
+			AND   (r.arch_flag = p_arch_flag 
+			      OR p_arch_flag IS NULL)
+	                ORDER BY part_no, part_name
+                ) LOOP
+                        l_part_def := l_part_def||'PARTITION '||LOWER(NVL(p_part_name,p_recname)
+									||p_indexid||p_ind_part_ranges.part_name);
                         IF p_ind_part_ranges.idx_tablespace IS NOT NULL THEN
                                 l_part_def := l_part_def ||' TABLESPACE '||p_ind_part_ranges.idx_tablespace;
                         END IF;
@@ -1848,7 +2021,8 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
                                                 l_part_def := ',';
                                         END IF;
                                         l_part_def := l_part_def||'SUBPARTITION '
-                                                      ||LOWER(p_recname||p_indexid||p_ind_part_ranges.part_name
+                                                      ||LOWER(NVL(p_part_name,p_recname)
+					              ||p_indexid||p_ind_part_ranges.part_name
                                                       ||'_'||LTRIM(TO_CHAR(l_subpartition,'00')));
                                         ins_line(p_type,l_part_def);
                                 END LOOP;
@@ -1859,7 +2033,6 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
                         l_part_def := ',';
                 END LOOP;
                 ins_line(p_type,')');
-                CLOSE c_ind_part_ranges;
 
 		unset_action(p_action_name=>l_action);
         END;
@@ -1963,11 +2136,11 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
 		dbms_application_info.read_module(module_name=>l_module, action_name=>l_action);
 		set_action(p_action_name=>'GLOB_IND_PARTS');
 
-		debug('glob_ind_PARTS:'||p_recname||'/'||p_part_id||'/'||p_part_type||'/'||p_subpart_type);
+		debug_msg('glob_ind_PARTS:'||p_recname||'/'||p_part_id||'/'||p_part_type||'/'||p_subpart_type,6);
                 OPEN c_idx_parts(p_recname);
                 LOOP
                         FETCH c_idx_parts INTO p_idx_parts;
-			debug('Part Range:'||p_idx_parts.part_No||'/'||p_idx_parts.part_name);
+			debug_msg('Part Range:'||p_idx_parts.part_No||'/'||p_idx_parts.part_name,6);
                         EXIT WHEN c_idx_parts%NOTFOUND;
 
                         l_counter := l_counter + 1;
@@ -2017,9 +2190,11 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
         END;
 
 --generate all partitioned indexes defined on record
+--wibble don't build archive partition
         PROCEDURE mk_part_indexes(p_recname    VARCHAR2
                                  ,p_table_name VARCHAR2
                                  ,p_schema     VARCHAR2
+                                 ,p_arch_flag  VARCHAR2 
                                  ) IS
                 l_ind_def VARCHAR2(100 CHAR);
 		l_type INTEGER;
@@ -2030,6 +2205,8 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
 	BEGIN
 		dbms_application_info.read_module(module_name=>l_module, action_name=>l_action);
 		set_action(p_action_name=>'MK_PART_INDEXES');
+
+		debug_msg('mk_part_indexes:'||p_recname||'/'||p_schema||'.'||p_table_name||'/arch_flag='||p_arch_flag,6);
 
                 ins_line(1,'set echo on pause off verify on feedback on timi on autotrace off pause off lines 100');
                 ins_line(1,LOWER('spool gfcindex_'||l_dbname||'_'||p_recname||'.lst'));
@@ -2049,7 +2226,8 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
 			, 	 NVL(i.idx_tablespace,p.idx_tablespace) idx_tablespace
 	                ,        NVL(i.idx_storage,p.idx_storage) idx_storage
 	                ,        NVL(i.override_schema,p.override_schema) override_schema
-			,        CASE WHEN i.indexid IS NULL OR i.part_type = 'L' THEN 'L'
+			,        CASE WHEN p.part_type = 'N' THEN 'G' --added 9.11.2011 to support partitioned indexes on non-partitioned tables
+                                      WHEN i.indexid IS NULL OR i.part_type = 'L' THEN 'L'
  			              ELSE 'G'
 			         END AS ind_part_type
 			,        i.name_suffix
@@ -2066,7 +2244,7 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
 			ORDER BY g.indexid)
                 LOOP
 	                IF l_explicit_schema = 'Y' THEN
-				l_schema := NVL(p_indexes.override_schema,LOWER(l_schema1))||'.';
+				l_schema := NVL(p_indexes.override_schema,LOWER(p_schema))||'.';
 			ELSE 
 				l_schema := '';
 			END IF;
@@ -2111,7 +2289,11 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
 					          p_indexid=>p_indexes.indexid,
 					          p_part_id=>p_indexes.part_id,
 					          p_subpart_type=>p_indexes.subpart_type,
-					          p_subpartitions=>p_indexes.hash_partitions);
+					          p_subpartitions=>p_indexes.hash_partitions,
+					          p_arch_flag=>p_arch_flag,
+					          p_owner=>p_schema,
+					          p_index_prefix=>'PS',
+					          p_part_name=>p_recname);
 					ELSIF p_indexes.part_type = 'H' AND 
 					      p_indexes.hash_partitions > 1 THEN
 						ind_hashparts(l_type,p_recname
@@ -2222,7 +2404,179 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
                 ins_line(1,'spool off');
 
 		unset_action(p_action_name=>l_action);
-        END;
+        END mk_part_indexes;
+
+
+--generate all partitioned indexes defined on record
+        PROCEDURE mk_arch_indexes(p_type       NUMBER
+				 ,p_recname    VARCHAR2
+                                 ,p_schema     VARCHAR2
+                                 ,p_table_name VARCHAR2
+	                         ,p_part_name  VARCHAR2 DEFAULT ''
+		                 ,p_ind_prefix VARCHAR2 DEFAULT 'ARC'
+                                 ) IS
+                l_ind_def VARCHAR2(100 CHAR);
+		l_schema VARCHAR2(31 CHAR);
+		l_module VARCHAR2(48);
+		l_action VARCHAR2(32);
+	BEGIN
+		dbms_application_info.read_module(module_name=>l_module, action_name=>l_action);
+		set_action(p_action_name=>'MK_ARCH_INDEXES');
+
+		debug_msg('mk_arch_indexes:recname='||p_recname
+			||'/table_name='||p_schema||'.'||p_table_name
+			||'/part_name='||p_part_name
+			||'/ind_prefix='||p_ind_prefix
+			,6);
+
+		l_schema := LOWER(p_schema||'.');
+
+--25.5.2011 do not build unique index on IOT
+                FOR p_indexes IN(
+                	SELECT   g.indexid, g.uniqueflag, g.platform_ora
+	                ,        p.RECNAME
+	                ,        NVL(i.part_id,p.part_id) part_id
+	                ,        NVL(i.part_type,p.part_type) part_type
+	                ,        NVL(i.part_column,p.part_column) part_column
+	                ,        NVL(i.subpart_type,p.subpart_type) subpart_type
+	                ,        NVL(i.subpart_column,p.subpart_column) subpart_column 
+			,        NVL(i.hash_partitions,p.hash_partitions) hash_partitions
+			, 	 NVL(i.idx_tablespace,p.idx_tablespace) idx_tablespace
+	                ,        NVL(i.idx_storage,p.idx_storage) idx_storage
+	                ,        NVL(i.override_schema,p.override_schema) override_schema
+			,        CASE WHEN i.indexid IS NULL OR i.part_type = 'L' THEN 'L'
+ 			              ELSE 'G'
+			         END AS ind_part_type
+			,        i.name_suffix
+        	        FROM     gfc_ps_indexdefn g --6.9.2007 removed psindexdefn
+			         LEFT OUTER JOIN gfc_part_indexes i
+			         ON i.recname = g.recname
+			         AND i.indexid = g.indexid
+                	,        gfc_part_tables p
+	                WHERE    p.recname = g.recname
+			AND      g.recname = p_recname
+                	AND      p.recname = p_recname
+			AND      g.platform_ora = 1
+			AND      (p.organization = 'I' AND g.indexid = '_') 
+			AND 	 (i.part_type = 'L' OR i.part_type IS NULL OR g.uniqueflag = 1)
+			ORDER BY g.indexid)
+                LOOP
+			debug_msg('p_indexes:indexid='||p_indexes.indexid
+				||'/part_type='||p_indexes.part_type
+				||'/ind_part_type='||p_indexes.ind_part_type,7);
+
+			IF p_ind_prefix = 'XCHG' AND p_indexes.ind_part_type = 'G' THEN
+                        	ins_line(p_type,'DROP INDEX '||LOWER(p_schema||'.'||p_ind_prefix||p_indexes.indexid||p_recname||p_indexes.name_suffix));
+	                        ins_line(p_type,'/');
+			ELSE
+	                        l_ind_def := 'CREATE';
+        	                IF p_indexes.uniqueflag = 1 THEN
+       	        	                l_ind_def := l_ind_def||' UNIQUE';
+               	        	END IF;
+	                       	l_ind_def := l_ind_def||' INDEX '||
+        	                        LOWER(p_schema||'.'||p_ind_prefix||p_indexes.indexid||p_recname||p_indexes.name_suffix)||
+                	                ' ON '||LOWER(p_schema||'.'||p_table_name);
+                        	ins_line(p_type,l_ind_def);
+	                        ind_cols(p_type,p_recname,p_indexes.indexid,l_desc_index);
+				IF p_part_name IS NULL THEN
+					NULL; --do not partition the index
+				ELSIF p_indexes.ind_part_type = 'L' THEN  --local partitioning
+	                       	        ins_line(p_type,'LOCAL');
+					IF p_indexes.part_type = 'L' THEN
+                	                	ind_part_lists(p_type=>p_type,
+						          p_recname=>p_recname,
+						          p_indexid=>p_indexes.indexid,
+						          p_part_id=>p_indexes.part_id,
+					        	  p_subpart_type=>p_indexes.subpart_type,
+					        	  p_subpartitions=>p_indexes.hash_partitions);
+					ELSIF p_indexes.part_type = 'R' THEN
+                	                	ind_part_ranges(p_type=>p_type,
+					         p_recname=>p_recname,
+					         p_indexid=>p_indexes.indexid,
+				        	 p_part_id=>p_indexes.part_id,
+					         p_subpart_type=>p_indexes.subpart_type,
+					         p_subpartitions=>p_indexes.hash_partitions,
+					         p_arch_flag=>'A',
+					         p_owner=>p_schema,
+					         p_index_prefix=>p_ind_prefix,
+				        	 p_part_name=>p_part_name);
+					ELSIF p_indexes.part_type = 'H' AND 
+					      p_indexes.hash_partitions > 1 THEN
+						ind_hashparts(p_type,p_recname
+					                    ,p_indexes.indexid,p_indexes.hash_partitions);
+					END IF;
+				ELSIF p_indexes.part_type IN('R') THEN -- add global range index clause here
+					IF p_indexes.part_type = 'R' THEN
+      					                ins_line(p_type,'GLOBAL PARTITION BY RANGE ('
+  							        ||p_indexes.part_column||')');
+					ELSE /*List-although oracle doesn't support this yet!*/
+	     				                ins_line(p_type,'GLOBAL PARTITION BY LIST('
+					        ||p_indexes.part_column||')');
+					END IF;
+	       	        	        IF p_indexes.subpart_type = 'H' AND 
+					   p_indexes.hash_partitions > 1 AND 
+					   p_indexes.subpart_column IS NOT NULL THEN
+						ins_line(p_type,'SUBPARTITION BY HASH ('||p_indexes.subpart_column
+						          ||') SUBPARTITIONS '||p_indexes.hash_partitions);
+					ELSIF p_indexes.subpart_type = 'L' AND 
+					      p_indexes.subpart_column IS NOT NULL THEN
+						ins_line(p_type,'SUBPARTITION BY LIST ('||p_indexes.subpart_column||')');
+					END IF;
+		                        glob_ind_parts(p_type,p_indexes.recname, p_indexes.indexid, p_indexes.part_id,
+					          p_indexes.part_type, p_indexes.subpart_type,
+					          p_indexes.hash_partitions);
+	
+				ELSIF p_indexes.part_type = 'H' AND p_indexes.hash_partitions > 1 THEN
+					ins_line(p_type,'GLOBAL PARTITION BY HASH ('||p_indexes.part_column||')');
+					ind_hashparts(p_type     =>p_type
+					             ,p_recname  =>p_indexes.recname
+					             ,p_indexid  =>p_indexes.indexid
+					             ,p_num_parts=>p_indexes.hash_partitions);
+				END IF;
+	
+				--index level storage clause
+                	        IF p_indexes.idx_tablespace IS NOT NULL THEN
+                        	       ins_line(p_type,'TABLESPACE '||p_indexes.idx_tablespace);
+		                END IF;
+        	       	        IF p_indexes.idx_storage IS NOT NULL THEN
+                	       	        ins_line(p_type,idx_storage(p_recname, p_indexes.indexid, 
+					           p_indexes.idx_storage, p_indexes.hash_partitions)); --6.9.2007
+	                        END IF;
+
+	                        --9.10.2003 - create index parallel
+       		                IF l_parallel_index = 'Y' THEN
+                	                ins_line(p_type,'PARALLEL');
+				ELSE
+					ins_line(p_type,'NOPARALLEL');
+	                        END IF;
+
+	                        --9.10.2003 - create index nologging, then change it to logged noparallel
+       		                IF l_logging = 'N' THEN
+               		                ins_line(p_type,'NOLOGGING');
+                       		END IF;
+	                        ins_line(p_type,'/');
+        	                ins_line(p_type,'');
+	
+        	                IF l_logging = 'N' THEN
+       	        	                ins_line(p_type,'ALTER INDEX '||
+					           LOWER(l_schema||p_ind_prefix||p_indexes.indexid||p_recname
+                                	           ||p_indexes.name_suffix));
+	                                ins_line(p_type,'LOGGING');
+       		                        ins_line(p_type,'/');
+                	        END IF;
+               	        	IF l_parallel_index = 'Y' THEN
+	                       	       ins_line(p_type,'ALTER INDEX '||
+					          LOWER(l_schema||p_ind_prefix||p_indexes.indexid||p_recname
+                	                          ||p_indexes.name_suffix));
+                        	       ins_line(p_type,'NOPARALLEL');
+	       	                       ins_line(p_type,'/');
+        	                END IF;
+			END IF;
+               	        ins_line(p_type,'');
+                END LOOP;
+
+		unset_action(p_action_name=>l_action);
+        END mk_arch_indexes;
 
 --generate all GLOBAL TEMPORARY indexes defined on record
         PROCEDURE mk_gt_indexes (p_recname VARCHAR2, p_table_name VARCHAR2, p_suffix VARCHAR2) IS
@@ -2336,35 +2690,50 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
 	END;
 
 --set index tablespace to partititon tablespace
-	PROCEDURE set_index_tablespace(p_type NUMBER, p_recname VARCHAR2, p_part_name VARCHAR2) IS
+	PROCEDURE set_index_tablespace(p_type NUMBER, p_recname VARCHAR2, p_part_name VARCHAR2, 
+                                       p_schema VARCHAR2, p_arch_flag VARCHAR2) IS
                 l_counter INTEGER := 0;
 		l_module VARCHAR2(48);
 		l_action VARCHAR2(32);
+		l_index_prefix VARCHAR2(3);
 	BEGIN
 		dbms_application_info.read_module(module_name=>l_module, action_name=>l_action);
 		set_action(p_action_name=>'SET_INDEX_TABLESPACE');
 
+		debug_msg('SET_INDEX_TABLESPACE:recname='||p_recname
+ 			||'/part_name='||p_part_name
+ 			||'/schema='||p_schema
+ 			||'/arch_flag='||p_arch_flag,6);
+
+		IF p_arch_flag = 'A' THEN
+			l_index_prefix := 'ARC';
+		ELSE
+			l_index_prefix := 'PS';
+		END IF;
+
 		FOR p_indexes IN (	
 				SELECT	i.indexid, COALESCE(r.idx_tablespace,t.idx_tablespace) idx_tablespace
 				FROM	gfc_ps_indexdefn i
+					LEFT OUTER JOIN gfc_part_indexes pi --26.5.2010 only include partitioned indexes
+					ON      pi.recname = i.recname
+					AND	pi.indexid = i.indexid
 				,	gfc_part_tables t
 				,	gfc_part_ranges r --qwert add ps defaults
-				,	gfc_part_indexes pi --26.5.2010 only include partitioned indexes
 				WHERE	t.recname = p_recname
 				AND	r.part_name = p_part_name
-				AND	i.recname = p_recname
+				AND	i.recname = t.recname
 				AND	r.part_id = t.part_id
 				AND	i.platform_ora = 1 --1.4.2009
-				AND	pi.recname = p_recname
-				AND	pi.indexid = i.indexid
-				AND	pi.part_type != 'N'
+				AND	NVL(pi.part_type,t.part_type) != 'N'
 				ORDER BY 1
 				) LOOP
+			debug_msg('indexid='||p_indexes.indexid
+                                ||'idx_tablespace='||p_indexes.idx_tablespace,6);
 			IF p_indexes.idx_tablespace IS NOT NULL THEN
 				IF l_counter = 0 THEN --26.5.2010 added error control in case indexes are not partitioned
 					whenever_sqlerror(p_type,FALSE);
 				END IF;
-				ins_line(p_type,'ALTER INDEX '||LOWER(l_schema2||'PS'||p_indexes.indexid||p_recname)||
+				ins_line(p_type,'ALTER INDEX '||LOWER(p_schema||'.'||l_index_prefix||p_indexes.indexid||p_recname)||
 			                ' MODIFY DEFAULT ATTRIBUTES TABLESPACE '||LOWER(p_indexes.idx_tablespace));
 				ins_line(p_type,'/');
 				l_counter := l_counter + 1;
@@ -2379,13 +2748,20 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
 	END;
 
 --set index tablespace to partititon tablespace
-	PROCEDURE unset_index_tablespace(p_type NUMBER, p_recname VARCHAR2) IS
+	PROCEDURE unset_index_tablespace(p_type NUMBER, p_recname VARCHAR2, p_schema VARCHAR2, p_arch_flag VARCHAR2) IS
                 l_counter INTEGER := 0;
 		l_module VARCHAR2(48);
 		l_action VARCHAR2(32);
+		l_index_prefix VARCHAR2(3);
 	BEGIN
 		dbms_application_info.read_module(module_name=>l_module, action_name=>l_action);
 		set_action(p_action_name=>'UNSET_INDEX_TABLESPACE');
+
+		IF p_arch_flag = 'A' THEN
+			l_index_prefix := 'ARC';
+		ELSE
+			l_index_prefix := 'PS';
+		END IF;
 
 		FOR p_indexes IN (	
 				SELECT	i.indexid, t.idx_tablespace
@@ -2404,7 +2780,7 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
 				IF l_counter = 0 THEN
 					whenever_sqlerror(p_type,FALSE);
 				END IF;
-				ins_line(p_type,'ALTER INDEX '||LOWER(l_schema2||'PS'||p_indexes.indexid||p_recname)||
+				ins_line(p_type,'ALTER INDEX '||LOWER(p_schema||'.'||l_index_prefix||p_indexes.indexid||p_recname)||
 			                ' MODIFY DEFAULT ATTRIBUTES TABLESPACE '||LOWER(p_indexes.idx_tablespace));
 				ins_line(p_type,'/');
 				l_counter := l_counter + 1;
@@ -2581,7 +2957,7 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
                         ins_line(p_type,'ALTER TABLE '||LOWER(l_schema2||p_table_name));
                         ins_line(p_type,'EXCHANGE SUBPARTITION '||LOWER(l_default_subpartition_name));
                         ins_line(p_type,'WITH TABLE '||LOWER(l_schema||'gfc_'||p_recname));
-                        ins_line(p_type,'INCLUDING INDEXES WITH VALIDATION');
+                        ins_line(p_type,'INCLUDING INDEXES WITH VALIDATION UPDATE GLOBAL INDEXES');
                         ins_line(p_type,'/');
        	                ins_line(p_type,'');
 
@@ -2676,7 +3052,7 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
 	       	                ins_line(p_type,'EXCHANGE SUBPARTITION '
 					||LOWER(p_recname||'_'||p_part_name||'_'||l_subpart_name));
                        		ins_line(p_type,'WITH TABLE '||LOWER(l_schema||'gfc_'||p_recname));
-                	        ins_line(p_type,'INCLUDING INDEXES WITH VALIDATION');
+                	        ins_line(p_type,'INCLUDING INDEXES WITH VALIDATION UPDATE GLOBAL INDEXES');
         	                ins_line(p_type,'/');
 	       	                ins_line(p_type,'');
 			ELSE --added 29.3.2011 optionally force repopulation of default partition
@@ -2705,10 +3081,13 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
 	END drop_subpartex;
 
 --generate partition clause on the basis of part ranges table
-        PROCEDURE add_tab_subparts(p_type NUMBER, p_recname VARCHAR2, p_table_name VARCHAR2, 
+        PROCEDURE add_tab_subparts(p_type NUMBER, p_recname VARCHAR2, 
+				   p_table_owner  VARCHAR2, 
+				   p_table_name   VARCHAR2, 
                                    p_part_id      VARCHAR2, 
                                    p_part_type    VARCHAR2, 
-                                   p_subpart_type VARCHAR2) IS
+                                   p_subpart_type VARCHAR2,
+				   p_part_name    VARCHAR2 DEFAULT '') IS
 
                 CURSOR c_tab_subparts(p_table_name VARCHAR2
 		                     ,p_recname    VARCHAR2) IS
@@ -2727,10 +3106,11 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
 		AND     pl.part_id = p_part_id
 		AND NOT EXISTS(
 			SELECT 'x'
-			FROM	user_tab_subpartitions tp
-			WHERE	tp.table_name = p_table_name
-			AND	tp.partition_name = p_recname||'_'||pr.part_name
-			AND	tp.subpartition_name = p_recname||'_'||pr.part_name||'_'||pl.part_name
+			FROM	all_tab_subpartitions tp
+			WHERE	tp.table_owner = UPPER(p_table_owner)
+			AND	tp.table_name = UPPER(p_table_name)
+			AND	tp.partition_name = UPPER(p_recname||'_'||pr.part_name)
+			AND	tp.subpartition_name = UPPER(p_part_name||'_'||pr.part_name||'_'||pl.part_name)
 			)
 		ORDER BY pr.part_no, pl.part_no
 		;
@@ -2792,6 +3172,8 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
 
                         ins_line(p_type,'/');
                         ins_line(p_type,'');
+
+---qwert---could consider adding move rows for this list partition from exchange table 
                 END LOOP;
                 CLOSE c_tab_subparts;
 
@@ -2807,34 +3189,12 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
         END add_tab_subparts;
 
 --generate partition clause on the basis of part ranges table
-        PROCEDURE add_tab_parts(p_type NUMBER, p_recname VARCHAR2, p_table_name VARCHAR2, 
+        PROCEDURE add_tab_parts(p_type NUMBER, p_recname VARCHAR2, 
+	                        p_table_owner VARCHAR2, p_table_name VARCHAR2, 
                                 p_part_id VARCHAR2, p_part_type VARCHAR2, 
-                                p_subpart_type VARCHAR2, p_subpartitions INTEGER) IS
-                CURSOR c_tab_parts(p_recname VARCHAR2) IS
-		SELECT	pr.*
-		FROM	gfc_part_ranges pr
-		,	user_tables t
-		WHERE	t.table_name = p_table_name
-		AND	t.partitioned = 'YES'
-		AND	pr.part_id = p_part_id
-		AND NOT EXISTS(
-			SELECT 'x'
-			FROM	user_tab_partitions tp
-			WHERE	tp.table_name = p_table_name -- DECODE(r.sqltablename,' ','PS_'||r.recname,r.sqltablename)
-			AND	tp.partition_name = p_recname||'_'||pr.part_name
-			)
-		AND NOT EXISTS(
-			SELECT 'x'
-			FROM	gfc_part_ranges pr1
-			,	user_tab_partitions tp1 --enhancement 23.4.2010
-			WHERE	pr1.part_id = pr.part_id
-			AND	pr1.part_no > pr.part_no
-			AND	tp1.table_name = t.table_name
-			AND	tp1.partition_name = p_recname||'_'||pr1.part_name
-			)
-                ORDER BY part_no, part_name;
-
-                p_tab_parts c_tab_parts%ROWTYPE;
+                                p_subpart_type VARCHAR2, p_subpartitions INTEGER,
+				p_arch_flag VARCHAR2 DEFAULT 'N',
+	                        p_part_name VARCHAR2 DEFAULT '') IS
                 l_part_def VARCHAR2(200 CHAR);
                 l_counter INTEGER := 0;
                 l_subpartition INTEGER;
@@ -2844,25 +3204,51 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
 		dbms_application_info.read_module(module_name=>l_module, action_name=>l_action);
 		set_action(p_action_name=>'ADD_TAB_PARTS');
 
-		debug('ADD_TAB_PARTS:'||p_recname||'/'||p_tab_parts.part_id||'/'||p_part_type||'/'||p_subpart_type);
-                OPEN c_tab_parts(p_recname);
-                LOOP
-                        FETCH c_tab_parts INTO p_tab_parts;
-			debug('Part Range:'||p_tab_parts.part_No||'/'||p_tab_parts.part_name);
-                        EXIT WHEN c_tab_parts%NOTFOUND;
+		debug_msg('ADD_TAB_PARTS:recname='||p_recname
+					||'/table='||p_table_owner||'.'||p_table_name
+					||'/part_id='||p_part_id
+					||'/part_type='||p_part_type
+					||'/subpart_type='||p_subpart_type
+					||'/subpartitions='||p_subpartitions
+					||'/arch_flag='||p_arch_flag
+					||'/part_name='||p_part_name,6);
 
---			IF l_counter = 0 THEN
---				signature(p_type,FALSE);
---	                        ins_line(p_type,LOWER('spool gfcalter_'||l_dbname||'_'||p_recname||'.lst'));
---				whenever_sqlerror(p_type, TRUE);
---			END IF;
+		FOR p_tab_parts IN(
+			SELECT	pr.*
+			FROM	gfc_part_ranges pr
+			,	dba_tables t
+			WHERE	t.owner = UPPER(p_table_owner)
+			AND	t.table_name = UPPER(p_table_name)
+			AND	t.partitioned = 'YES'
+			AND	pr.part_id = p_part_id
+			AND	(pr.arch_flag = p_arch_flag OR p_arch_flag IS NULL)
+			AND NOT EXISTS(
+				SELECT 'x'
+				FROM	dba_tab_partitions tp
+				WHERE	tp.table_owner = t.owner
+				AND	tp.table_name = t.table_name 
+				AND	tp.partition_name = p_part_name||'_'||pr.part_name
+				)
+			AND NOT EXISTS(
+				SELECT 'x'
+				FROM	gfc_part_ranges pr1
+				,	dba_tab_partitions tp1 --enhancement 23.4.2010
+				WHERE	pr1.part_id = pr.part_id
+				AND	pr1.part_no > pr.part_no
+				AND	tp1.table_owner = t.owner
+				AND	tp1.table_name = t.table_name
+				AND	tp1.partition_name = p_part_name||'_'||pr1.part_name
+				)
+        	        ORDER BY part_no, part_name
+		) LOOP
+			debug_msg('Part Range:'||p_tab_parts.part_No||'/'||p_tab_parts.part_name,6);
 			l_counter := l_counter + 1;
 
 			--alter indexes to set tablespace to partition tablespace
-			set_index_tablespace(p_type, p_recname, p_tab_parts.part_name);
+			set_index_tablespace(p_type, p_recname, p_tab_parts.part_name, p_table_owner, p_arch_flag);
 
-			ins_line(p_type,'ALTER TABLE '||LOWER(l_schema2||p_table_name)
-                                        ||' ADD PARTITION '||LOWER(p_recname||'_'||p_tab_parts.part_name));
+			ins_line(p_type,'ALTER TABLE '||LOWER(p_table_owner||'.'||p_table_name)
+                                        ||' ADD PARTITION '||LOWER(p_part_name||'_'||p_tab_parts.part_name));
 			IF p_part_type = 'R' THEN
 				ins_line(p_type,'VALUES LESS THAN ('||p_tab_parts.part_value||')');
 			ELSIF p_part_type = 'L' THEN /*List*/
@@ -2881,7 +3267,7 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
                                         ELSE
                                                 l_part_def := ',';
                                         END IF;
-                                        l_part_def := l_part_def||'SUBPARTITION '||LOWER(p_recname||'_'
+                                        l_part_def := l_part_def||'SUBPARTITION '||LOWER(p_part_name||'_'
 					              ||p_tab_parts.part_name||'_'||LTRIM(TO_CHAR(l_subpartition,'00')));
                                         ins_line(p_type,l_part_def);
                                 END LOOP;
@@ -2889,65 +3275,26 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
 			ELSIF p_subpart_type = 'L' THEN
 				tab_listparts(p_type, p_recname
                                              ,p_tab_parts.part_id
-                                             ,p_tab_parts.part_name);
+                                             ,p_tab_parts.part_name
+					     ,p_part_name);
                         END IF;
                         ins_line(p_type,'/');
                         ins_line(p_type,'');
                 END LOOP;
                 IF l_counter > 0 THEN
 			--reset index tablespace at table level
-			unset_index_tablespace(p_type, p_recname);
+			unset_index_tablespace(p_type, p_recname, p_table_owner, p_arch_flag);
 --			ins_line(p_type,'spool off');
                 END IF;
-                CLOSE c_tab_parts;
 		unset_action(p_action_name=>l_action);
         END;
 
 --generate split partition clause on the basis of part ranges table -- procedure added 23.4.2010
-        PROCEDURE split_tab_parts(p_type NUMBER, p_recname VARCHAR2, p_table_name VARCHAR2, 
+        PROCEDURE split_tab_parts(p_type NUMBER, p_recname VARCHAR2, 
+			        p_table_owner VARCHAR2, p_table_name VARCHAR2, 
                                 p_part_id VARCHAR2, p_part_type VARCHAR2, 
-                                p_subpart_type VARCHAR2, p_subpartitions INTEGER) IS
-                CURSOR c_tab_parts(p_recname VARCHAR2) IS
-		SELECT	/*+LEADING(t pr) USE_NL(pr pr2)*/ pr.*
-		,	pr2.part_name      part_name2
-		,	pr2.tab_tablespace tab_tablespace2
-		,	pr2.idx_tablespace idx_tablespace2
-		,	pr2.tab_storage    tab_storage2
-		,	pr2.idx_storage    idx_storage2
-		FROM	gfc_part_ranges pr  --the missing partition
-		,	gfc_part_ranges pr2 --the next partition that exists
-		,	user_tables t
-		WHERE	t.table_name = p_table_name
-		AND	t.partitioned = 'YES'
-		AND	pr.part_id = p_part_id
-		AND	pr2.part_id = pr.part_id
-		AND	pr2.part_no = (
-			SELECT	MIN(pr2a.part_no)
-			FROM	gfc_part_ranges pr2a
-			,	user_tab_partitions tp2
-			WHERE	pr2a.part_id = pr.part_id
-			AND	pr2a.part_no > pr.part_no
-                        AND     tp2.table_name = t.table_name
-			AND	tp2.partition_name = p_recname||'_'||pr2a.part_name
-			)
-		AND NOT EXISTS(
-			SELECT 'x'
-			FROM	user_tab_partitions tp
-			WHERE	tp.table_name = t.table_name
-			AND	tp.partition_name = p_recname||'_'||pr.part_name
-			)
-		AND EXISTS(
-			SELECT 'x'
-			FROM	gfc_part_ranges pr1
-			,	user_tab_partitions tp1
-			WHERE	pr1.part_id = pr.part_id
-			AND	pr1.part_no > pr.part_no
-			AND	tp1.table_name = t.table_name
-			AND	tp1.partition_name = p_recname||'_'||pr1.part_name
-			)
-                ORDER BY pr.part_no;
-
-                p_tab_parts c_tab_parts%ROWTYPE;
+                                p_subpart_type VARCHAR2, p_subpartitions INTEGER, 
+                                p_arch_flag VARCHAR2, p_part_name VARCHAR2) IS
                 l_part_def VARCHAR2(200 CHAR);
                 l_counter INTEGER := 0;
                 l_subpartition INTEGER;
@@ -2956,29 +3303,77 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
 	BEGIN
 		dbms_application_info.read_module(module_name=>l_module, action_name=>l_action);
 		set_action(p_action_name=>'SPLIT_TAB_PARTS');
+		debug_msg('SPLIT_TAB_PARTS:recname='||p_recname
+					||'/table='||p_table_owner||'.'||p_table_name
+					||'/part_id='||p_part_id
+					||'/part_type='||p_part_type
+					||'/subpart_type='||p_subpart_type
+					||'/subpartitions='||p_subpartitions
+					||'/arch_flag='||p_arch_flag
+					||'/part_name='||p_part_name,6);
 
-		debug('SPLIT_TAB_PARTS:'||p_recname||'/'||p_tab_parts.part_id||'/'||p_part_type||'/'||p_subpart_type);
-                OPEN c_tab_parts(p_recname);
-                LOOP
-                        FETCH c_tab_parts INTO p_tab_parts;
-			debug('Part Range:'||p_tab_parts.part_No||'/'||p_tab_parts.part_name);
-                        EXIT WHEN c_tab_parts%NOTFOUND;
+		FOR p_tab_parts IN (
+			SELECT	/*+LEADING(t pr) USE_NL(pr pr2)*/ pr.*
+			,	pr2.part_name      part_name2
+			,	pr2.tab_tablespace tab_tablespace2
+			,	pr2.idx_tablespace idx_tablespace2
+			,	pr2.tab_storage    tab_storage2
+			,	pr2.idx_storage    idx_storage2
+			FROM	gfc_part_ranges pr  --the missing partition
+			,	gfc_part_ranges pr2 --the next partition that exists
+			,	dba_tables t
+			WHERE	t.owner = p_table_owner
+			AND	t.table_name = p_table_name
+			AND	t.partitioned = 'YES'
+			AND	(pr.arch_flag = p_arch_flag OR p_arch_flag IS NULL)
+			AND	pr.part_id = p_part_id
+			AND	pr2.part_id = pr.part_id
+			AND	pr2.part_no = (
+				SELECT	MIN(pr2a.part_no)
+				FROM	gfc_part_ranges pr2a
+				,	dba_tab_partitions tp2
+				WHERE	pr2a.part_id = pr.part_id
+				AND	pr2a.part_no > pr.part_no
+                        	AND     tp2.table_owner = t.owner
+				AND	tp2.table_name = t.table_name
+				AND	tp2.partition_name = p_part_name||'_'||pr2a.part_name
+				)
+			AND NOT EXISTS(
+				SELECT 'x'
+				FROM	dba_tab_partitions tp
+				WHERE	tp.table_owner = t.owner
+				AND	tp.table_name = t.table_name
+				AND	tp.partition_name = p_part_name||'_'||pr.part_name
+				)
+			AND EXISTS(
+				SELECT 'x'
+				FROM	gfc_part_ranges pr1
+				,	dba_tab_partitions tp1
+				WHERE	pr1.part_id = pr.part_id
+				AND	pr1.part_no > pr.part_no
+				AND	tp1.table_owner = t.owner
+				AND	tp1.table_name = t.table_name
+				AND	tp1.partition_name = p_part_name||'_'||pr1.part_name
+				)
+	                ORDER BY pr.part_no
+                ) LOOP
+			debug_msg('Part Range:'||p_tab_parts.part_No||'/'||p_tab_parts.part_name,6);
 
---			IF l_counter = 0 THEN
---				signature(p_type,FALSE);
---	                        ins_line(p_type,LOWER('spool gfcalter_'||l_dbname||'_'||p_recname||'.lst'));
---				whenever_sqlerror(p_type, TRUE);
---			END IF;
 			l_counter := l_counter + 1;
 
 			--alter indexes to set tablespace to partition tablespace
-			set_index_tablespace(p_type, p_recname, p_tab_parts.part_name);
+			set_index_tablespace(p_type, p_recname, p_tab_parts.part_name, p_table_owner, p_arch_flag);
 
-			ins_line(p_type,'ALTER TABLE '||LOWER(l_schema2||p_table_name)
-                                        ||' SPLIT PARTITION '||LOWER(p_recname||'_'||p_tab_parts.part_name2));
+			--rename high partition - 6.2.2012
+			IF p_subpart_Type = 'H' AND p_subpartitions > 1 THEN
+ 				rename_subparts(p_type=>p_type, p_table_name=>p_table_name, p_part_name=>UPPER(p_part_name||'_'||p_tab_parts.part_name2), p_drop_index=>'N');
+			END IF;
+
+			ins_line(p_type,'ALTER TABLE '||LOWER(p_table_owner||'.'||p_table_name)
+                                 ||' SPLIT PARTITION '||LOWER(p_part_name  ||'_'||p_tab_parts.part_name2));
 			ins_line(p_type,'AT ('||p_tab_parts.part_value||') INTO');
 --first partition in split
-                        ins_line(p_type,'(PARTITION '||LOWER(p_recname||'_'||p_tab_parts.part_name));
+                        ins_line(p_type,'(PARTITION '||LOWER(p_part_name||'_'||p_tab_parts.part_name));
                         IF p_tab_parts.tab_tablespace IS NOT NULL THEN
                                 ins_line(p_type,'TABLESPACE '||p_tab_parts.tab_tablespace);
                         END IF;
@@ -2992,7 +3387,7 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
                                         ELSE
                                                 l_part_def := ',';
                                         END IF;
-                                        l_part_def := l_part_def||'SUBPARTITION '||LOWER(p_recname||'_'
+                                        l_part_def := l_part_def||'SUBPARTITION '||LOWER(p_part_name||'_'
 					              ||p_tab_parts.part_name||'_'||LTRIM(TO_CHAR(l_subpartition,'00')));
                                         ins_line(p_type,l_part_def);
                                 END LOOP;
@@ -3000,11 +3395,12 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
 			ELSIF p_subpart_type = 'L' THEN
 				tab_listparts(p_type, p_recname
                                              ,p_tab_parts.part_id
-                                             ,p_tab_parts.part_name);
+                                             ,p_tab_parts.part_name
+				             ,p_part_name);
                         END IF;
 --second partition in split
-                        ins_line(p_type,',PARTITION '||LOWER(p_recname||'_'||p_tab_parts.part_name2));
-                        IF p_tab_parts.tab_tablespace IS NOT NULL THEN
+                        ins_line(p_type,',PARTITION '||LOWER(p_part_name||'_'||p_tab_parts.part_name2));
+                        IF p_tab_parts.tab_tablespace2 IS NOT NULL THEN
                                 ins_line(p_type,'TABLESPACE '||p_tab_parts.tab_tablespace2);
                         END IF;
                         IF p_tab_parts.tab_storage IS NOT NULL THEN
@@ -3017,7 +3413,7 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
                                         ELSE
                                                 l_part_def := ',';
                                         END IF;
-                                        l_part_def := l_part_def||'SUBPARTITION '||LOWER(p_recname||'_'
+                                        l_part_def := l_part_def||'SUBPARTITION '||LOWER(p_part_name||'_'
 					              ||p_tab_parts.part_name2||'_'||LTRIM(TO_CHAR(l_subpartition,'00')));
                                         ins_line(p_type,l_part_def);
                                 END LOOP;
@@ -3025,81 +3421,80 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
 			ELSIF p_subpart_type = 'L' THEN
 				tab_listparts(p_type, p_recname
                                              ,p_tab_parts.part_id
-                                             ,p_tab_parts.part_name2);
+                                             ,p_tab_parts.part_name2
+				             ,p_part_name);
                         END IF;
 --tail piece
-                        ins_line(p_type,') UPDATE GLOBAL INDEXES');
+                        ins_line(p_type,') UPDATE INDEXES');
                         ins_line(p_type,'/');
                         ins_line(p_type,'');
                 END LOOP;
                 IF l_counter > 0 THEN
 			--reset index tablespace at table level
-			unset_index_tablespace(p_type, p_recname);
+			unset_index_tablespace(p_type, p_recname, p_table_owner, p_arch_flag);
 --			ins_line(p_type,'spool off');
                 END IF;
-                CLOSE c_tab_parts;
 		unset_action(p_action_name=>l_action);
         END;
 
 --process partitioned tables
-        PROCEDURE part_tables  
-	(p_recname VARCHAR2 DEFAULT ''
-	) IS
-                CURSOR c_tables IS
-                SELECT  t.table_name
-                ,       t.table_type
-                ,       p.*
-		,	o.table_name ora_table_name
-                FROM    gfc_ps_tables t
-			LEFT OUTER JOIN user_tables o
-			ON o.table_name = t.table_name
-                ,       gfc_part_tables p
-                WHERE   t.table_type = 'P'
-                AND     t.match_db = 'N'
-                AND     t.rectype =0
-                AND     t.recname = p.recname
---                AND 	EXISTS( --check that partitioning column exists
---				SELECT	'x'
---				FROM	gfc_ps_tab_columns c
---				WHERE	c.fieldname = p.part_column
---				AND	c.recname = p.recname
---				)
-                AND     (NOT t.recname IN( -- supress partitioning of tables with long columns
-                                SELECT   c.recname 
-                                FROM     gfc_ps_tab_columns c 
-                                ,        psdbfield f
-                                WHERE    c.fieldname = f.fieldname
-                                AND      f.fieldtype IN(1,8,9) 
-                                AND      (f.length = 0 OR f.length > 2000)
-                                )
-			OR  	t.override_schema IS NOT NULL 
-			OR	l_longtoclob = 'Y'
-			)
-		AND	(p.recname LIKE p_recname OR p_recname IS NULL)
-                ORDER BY t.recname;
-
-                p_tables c_tables%ROWTYPE;
-                l_hint VARCHAR2(100 CHAR);
-                l_hint2 VARCHAR2(100 CHAR);
-                l_counter INTEGER := 0;
-                l_degree VARCHAR2(100 CHAR);
-		l_schema VARCHAR2(30 CHAR);
-		l_schema2 VARCHAR2(30 CHAR);
-		l_module VARCHAR2(48);
-		l_action VARCHAR2(32);
+        PROCEDURE part_tables(p_recname VARCHAR2 DEFAULT '') IS
+                l_hint      VARCHAR2(100 CHAR);
+                l_hint2     VARCHAR2(100 CHAR);
+                l_counter   INTEGER := 0;
+                l_degree    VARCHAR2(100 CHAR);
+		l_schema    VARCHAR2(30 CHAR);
+		l_schema2   VARCHAR2(30 CHAR);
+		l_module    VARCHAR2(48);
+		l_action    VARCHAR2(32);
+		l_arch_flag VARCHAR2(1);
 	BEGIN
 		dbms_application_info.read_module(module_name=>l_module, action_name=>l_action);
 		set_action(p_action_name=>'PART_TABLES');
 
-                OPEN c_tables;
-                LOOP
-                        FETCH c_tables INTO p_tables;
-                        EXIT WHEN c_tables%NOTFOUND;
-
+                FOR p_tables IN (
+	                SELECT  t.table_name
+        	        ,       t.table_type
+                	,       p.*
+			,	o.table_name ora_table_name
+        	        FROM    gfc_ps_tables t
+				LEFT OUTER JOIN user_tables o
+				ON o.table_name = t.table_name
+	                ,       gfc_part_tables p
+        	        WHERE   t.table_type = 'P'
+                	AND     t.match_db = 'N'
+	                AND     t.rectype =0
+        	        AND     t.recname = p.recname
+--              	  AND 	EXISTS( --check that partitioning column exists
+--					SELECT	'x'
+--					FROM	gfc_ps_tab_columns c
+--					WHERE	c.fieldname = p.part_column
+--					AND	c.recname = p.recname
+--					)
+	                AND     (NOT t.recname IN( -- supress partitioning of tables with long columns
+        	                        SELECT   c.recname 
+                	                FROM     gfc_ps_tab_columns c 
+                        	        ,        psdbfield f
+                                	WHERE    c.fieldname = f.fieldname
+	                                AND      f.fieldtype IN(1,8,9) 
+        	                        AND      (f.length = 0 OR f.length > 2000)
+                	                )
+				OR  	t.override_schema IS NOT NULL 
+				OR	l_longtoclob = 'Y'
+				)
+			AND	(p.recname LIKE p_recname OR p_recname IS NULL)
+	                ORDER BY t.recname		
+		) LOOP
 	                IF l_explicit_schema = 'Y' THEN
 				l_schema := NVL(p_tables.override_schema,LOWER(l_schema1))||'.';
 			ELSE 
 				l_schema := '';
+			END IF;
+
+			IF p_tables.arch_flag IN('A','D') THEN
+				l_arch_flag := 'N'; --build the non-arch partitions only
+			ELSE
+				l_arch_flag := ''; --build all partitions
 			END IF;
 
                         ins_line(0,'set echo on pause off verify on feedback on timi on autotrace off pause off lines 100');
@@ -3109,17 +3504,22 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
                         whenever_sqlerror(0,TRUE);
 			ddltrigger(0,FALSE); --added 10.10.2007
 
+                        ins_line(3,'set echo on pause off verify on feedback on timi on autotrace off pause off lines 100');
+                        ins_line(3,LOWER('spool gfcalter_'||l_dbname||'_'||p_tables.recname||'.lst'));
+                        signature(3,TRUE);
+			ins_line(3,'rem Partitioning Scheme '||p_tables.part_id);
+
 			IF p_tables.src_table_name IS NULL THEN --added 8.6.2010
 	                        whenever_sqlerror(0,FALSE);
         	                ins_line(0,'DROP TABLE '||LOWER(l_schema||'old_'||p_tables.recname)||l_drop_purge_suffix);
 				ins_line(0,'/');
                         	ins_line(0,'');
 	                        whenever_sqlerror(0,TRUE);
-        	                rename_parts(p_tables.table_name,l_drop_index);
+        	                rename_parts(0,p_tables.table_name,l_drop_index);
 				IF (   (p_tables.subpart_type = 'L') 
                         	    OR (p_tables.subpart_type = 'H' AND p_tables.hash_partitions > 1)
 	                           ) AND p_tables.subpart_column IS NOT NULL THEN
-        	                	rename_subparts(p_tables.table_name,l_drop_index);
+        	                	rename_subparts(p_type=>0, p_table_name=>p_tables.table_name, p_drop_index=>l_drop_index);
 				END IF;
 			ELSE
 	                        whenever_sqlerror(0,FALSE);
@@ -3167,12 +3567,13 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
                                       p_tables.subpart_column IS NOT NULL THEN
                 	                ins_line(0,'SUBPARTITION BY LIST ('||p_tables.subpart_column||')');
                         	END IF;
-	                        tab_part_ranges(p_tables.recname,p_tables.part_id,
-				          p_tables.subpart_type,p_tables.hash_partitions);
+	                        tab_part_ranges(0,p_tables.recname,p_tables.part_id,
+				         	p_tables.subpart_type,p_tables.hash_partitions,l_arch_flag,
+						l_schema1,p_tables.src_table_name);
 			ELSIF p_tables.part_type = 'L' THEN
 	                        ins_line(0,'PARTITION BY LIST('||p_tables.part_column||')');
-	                        tab_part_lists(p_tables.recname,p_tables.part_id,
-				          p_tables.subpart_type,p_tables.hash_partitions);
+	                        tab_part_lists(0,p_tables.recname,p_tables.part_id,
+				          p_tables.subpart_type,p_tables.hash_partitions,l_arch_flag);
 			ELSIF p_tables.part_type = 'H' AND 
                               p_tables.hash_partitions > 1 THEN
 				ins_line(0,'PARTITION BY HASH ('||p_tables.part_column||')');
@@ -3228,10 +3629,10 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
 	                        ins_line(0,'BEGIN'); /*1.10.2010 insert in PL/SQL block*/
 	                        ins_line(0,'INSERT /*'||l_hint||'*/ INTO '
                                                       ||LOWER(l_schema||'gfc_'||p_tables.recname)||' t (');
-	                        tab_col_list(p_tables.recname,p_column_name=>TRUE);
+	                        tab_col_list(0,p_tables.recname,p_column_name=>TRUE);
 	                        ins_line(0,') SELECT '||l_hint2);
-	                        tab_col_list(p_tables.recname,p_column_name=>TRUE);
---20.10.2008 - added criteria option
+	                        tab_col_list(0,p_tables.recname,p_tables.src_table_name,p_column_name=>FALSE); 
+				--20.10.2008 - added criteria option
 				IF p_tables.criteria IS NOT NULL THEN
 					ins_line(0,'FROM '||LOWER(l_schema||p_tables.src_table_name)||' s');
 		                        ins_line(0,p_tables.criteria||';');
@@ -3266,9 +3667,9 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
 	                        ins_line(0,'BEGIN'); /*1.10.2010 insert in PL/SQL block*/
 	                        ins_line(0,'INSERT /*'||l_hint||'*/ INTO '
                                                       ||LOWER(l_schema||'gfc_'||p_tables.recname)||' t (');
-	                        tab_col_list(p_tables.recname,p_column_name=>TRUE);
+	                        tab_col_list(0,p_tables.recname,p_column_name=>TRUE);
 	                        ins_line(0,') SELECT '||l_hint2);
-	                        tab_col_list(p_tables.recname,p_column_name=>FALSE);
+	                        tab_col_list(0,p_tables.recname,p_tables.ora_table_name,p_column_name=>FALSE);
 --20.10.2008 - added criteria option
 				IF p_tables.criteria IS NOT NULL THEN
        		                	ins_line(0,'FROM '||LOWER(l_schema||p_tables.ora_table_name)||' s');
@@ -3280,11 +3681,11 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
 				ins_line(0,'END;');
 				ins_line(0,'/');
        		                ins_line(0,'');
-                        	pause_sql(0);
+                        	pause_sql(3);
 			END IF;
 
-                        mk_part_indexes(p_tables.recname,p_tables.table_name, l_schema);
-                        pause_sql(0);
+                        mk_part_indexes(p_tables.recname,p_tables.table_name, l_schema1, l_arch_flag); 
+                        pause_sql(3);
 --9.10.2003 - alter table to logging and noparallel
 			whenever_sqlerror(0,TRUE);
 			IF p_tables.organization = 'I' THEN --25.5.2011 add organisation here if IOT
@@ -3430,31 +3831,53 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
 			ins_line(0,'/');
                         ins_line(0,'');
 
-                        ins_line(3,'set echo on pause off verify on feedback on timi on autotrace off pause off lines 100');
-                        ins_line(3,LOWER('spool gfcalter_'||l_dbname||'_'||p_tables.recname||'.lst'));
-                        signature(3,TRUE);
-			ins_line(3,'rem Partitioning Scheme '||p_tables.part_id);
-
                         --12.2.2008 append/split missing partitions - but what about indexes
 			IF p_tables.part_type IN('R','L') THEN
         	                whenever_sqlerror(3,TRUE);
 				ddltrigger(3,FALSE); 
 	                        ins_line(3,'');
 
-				add_tab_parts(3, p_tables.recname, p_tables.table_name, 
+				add_tab_parts(3, p_tables.recname, l_schema1, p_tables.table_name, 
 			                      p_tables.part_id, p_tables.part_type, 
-				              p_tables.subpart_type, p_tables.hash_partitions);
-				split_tab_parts(3, p_tables.recname, p_tables.table_name, 
+				              p_tables.subpart_type, p_tables.hash_partitions, 
+				              'N', p_tables.recname);
+				split_tab_parts(3, p_tables.recname, l_schema1, p_tables.table_name, 
 			                      p_tables.part_id, p_tables.part_type, 
-				              p_tables.subpart_type, p_tables.hash_partitions);
+				              p_tables.subpart_type, p_tables.hash_partitions, 
+				              'N', p_tables.recname);
 				IF p_tables.subpart_type = 'L' THEN
-					add_tab_subparts(3, p_tables.recname, p_tables.table_name, 
+					add_tab_subparts(3, p_tables.recname, l_schema1, p_tables.table_name, 
 				                         p_tables.part_id, p_tables.part_type, 
-					                 p_tables.subpart_type);
+					                 p_tables.subpart_type, p_tables.recname);
 				END IF;
 
 				ddltrigger(3,TRUE); 
 	                        ins_line(3,'');
+			END IF;
+
+
+			--5.5.2010-only query source table if it exists
+			IF p_tables.src_table_name IS NOT NULL THEN
+
+	                        ins_line(3,'BEGIN'); /*1.10.2010 insert in PL/SQL block*/
+	                        ins_line(3,'INSERT /*'||l_hint||'*/ INTO '
+                                                      ||LOWER(l_schema||'gfc_'||p_tables.recname)||' t (');
+	                        tab_col_list(3,p_tables.recname,p_column_name=>TRUE);
+	                        ins_line(3,') SELECT '||l_hint2);
+	                        tab_col_list(3,p_tables.recname,p_tables.src_table_name,p_column_name=>FALSE);
+
+				--20.10.2008 - added criteria option
+				IF p_tables.criteria IS NOT NULL THEN
+					ins_line(3,'FROM '||LOWER(l_schema||p_tables.src_table_name)||' s');
+		                        ins_line(3,p_tables.criteria||';');
+				ELSE
+					ins_line(3,'FROM '||LOWER(l_schema||p_tables.src_table_name)||' s;');
+				END IF;
+                	        ins_line(3,'COMMIT;');
+	                        ins_line(3,'END;');
+				ins_line(3,'/');
+	                        ins_line(3,'');
+                        	pause_sql(3);
 			END IF;
                         ins_line(0,'spool off');
                         ins_line(2,'spool off');
@@ -3462,9 +3885,208 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
 
 
                 END LOOP;
-                CLOSE c_tables;
 		unset_action(p_action_name=>l_action);
-        END;
+        END part_tables;
+
+--process archive partitioned tables
+        PROCEDURE arch_tables(p_recname VARCHAR2 DEFAULT '') IS
+		l_module  VARCHAR2(48);
+		l_action  VARCHAR2(32);
+		l_arch_schema     VARCHAR2(30);
+		l_arch_table_name VARCHAR2(30);
+	BEGIN
+		dbms_application_info.read_module(module_name=>l_module, action_name=>l_action);
+		set_action(p_action_name=>'ARCH_TABLES');
+
+                FOR p_tables IN (
+	                SELECT  t.table_name
+        	        ,       t.table_type
+                	,       p.*
+			,	DECODE(r.sqltablename,' ','PS_'||r.recname,r.sqltablename) arch_sqltablename
+			,	DECODE(b.sqltablename,' ','PS_'||b.recname,b.sqltablename) base_sqltablename
+        	        FROM    gfc_ps_tables t
+				LEFT OUTER JOIN user_tables o
+				ON o.table_name = t.table_name
+			,	psrecdefn b
+	                ,       gfc_part_tables p
+				LEFT OUTER JOIN psrecdefn r
+				ON r.recname = p.arch_recname
+        	        WHERE   t.table_type = 'P'
+                	AND     t.match_db = 'N'
+	                AND     t.rectype = 0
+        	        AND     t.recname = p.recname
+			AND	b.recname = p.recname
+			AND	(p.recname LIKE p_recname OR p_recname IS NULL)
+			AND	p.arch_flag = 'A'
+	                AND     (NOT t.recname IN( -- supress partitioning of tables with long columns
+        	                        SELECT   c.recname 
+                	                FROM     gfc_ps_tab_columns c 
+                        	        ,        psdbfield f
+                                	WHERE    c.fieldname = f.fieldname
+	                                AND      f.fieldtype IN(1,8,9) 
+        	                        AND      (f.length = 0 OR f.length > 2000)
+                	                )
+				OR  	t.override_schema IS NOT NULL 
+				OR	l_longtoclob = 'Y'
+				)
+	                ORDER BY t.recname		
+ 		) LOOP
+			debug_msg('ARCH_TABLES:'
+        	                ||'/recname='||p_tables.recname
+        	                ||'/part_id='||p_tables.part_id
+        	                ,6);
+
+			l_arch_schema := COALESCE(p_tables.arch_schema,p_tables.override_schema,l_schema1);
+			l_arch_table_name := COALESCE(p_tables.arch_table_name,p_tables.arch_sqltablename
+			                                                      ,p_tables.table_name);
+
+                        ins_line(4,'set echo on pause off verify on feedback on timi on autotrace off pause off lines 100');
+                        ins_line(4,LOWER('spool gfcarch1_'||l_dbname||'_'||p_tables.recname||'.lst'));
+                        signature(4,FALSE);
+			ins_line(4,'rem Partitioning Scheme '||p_tables.part_id);
+	                whenever_sqlerror(4,FALSE);
+
+			--create the exchange table
+                        ins_line(4,'CREATE TABLE '||LOWER(l_arch_schema||'.XCHG_'||p_recname));
+                        tab_cols(4,p_tables.recname,l_longtoclob,p_tables.organization,'arch_');
+
+			IF p_tables.organization = 'I' THEN --25.5.2011 add organisation here if IOT
+                                ins_line(4,'ORGANIZATION INDEX');
+			END IF;
+
+                        IF p_tables.tab_tablespace IS NOT NULL THEN
+                                ins_line(4,'TABLESPACE '||p_tables.tab_tablespace);
+                        END IF;
+
+			IF p_tables.organization = 'I' THEN --use index storage for IOT
+	                        IF p_tables.idx_storage IS NOT NULL THEN
+        	                        ins_line(4,idx_storage(p_tables.recname, '_', p_tables.idx_storage)); --25.5.2011
+                	        END IF;
+			ELSE 
+	                        IF p_tables.tab_storage IS NOT NULL THEN
+        	                        ins_line(4,tab_storage(p_tables.recname, p_tables.tab_storage)); --6.9.2007
+                	        END IF;
+			END IF;
+
+			ins_line(4,'LOGGING NOPARALLEL'); --always no parallel because we are going to partition exchange
+                        ins_line(4,'/');
+                        ins_line(4,'');
+--                      ins_line(4,'GRANT SELECT ON '||'XCHG_'||p_recname||' TO '||LOWER(l_schema1));
+--			ins_line(4,'/');
+--               	ins_line(4,'');
+
+                        mk_arch_indexes(4,p_tables.recname, l_arch_schema, 'XCHG_'||p_recname, NULL, 'XCHG'); 
+
+			--create the partitioned archive table
+                        ins_line(4,'CREATE TABLE '||LOWER(l_arch_schema||'.'||l_arch_table_name));
+                        tab_cols(4,p_tables.recname,l_longtoclob,p_tables.organization,'arch_');
+
+			IF p_tables.organization = 'I' THEN --25.5.2011 add organisation here if IOT
+                                ins_line(4,'ORGANIZATION INDEX');
+			END IF;
+
+                        IF p_tables.tab_tablespace IS NOT NULL THEN
+                                ins_line(4,'TABLESPACE '||p_tables.tab_tablespace);
+                        END IF;
+
+			IF p_tables.organization = 'I' THEN --use index storage for IOT
+	                        IF p_tables.idx_storage IS NOT NULL THEN
+        	                        ins_line(4,idx_storage(p_tables.recname, '_', p_tables.idx_storage)); --25.5.2011
+                	        END IF;
+			ELSE 
+	                        IF p_tables.tab_storage IS NOT NULL THEN
+        	                        ins_line(4,tab_storage(p_tables.recname, p_tables.tab_storage)); --6.9.2007
+                	        END IF;
+			END IF;
+
+			IF p_tables.part_type = 'R' THEN
+	                        ins_line(4,'PARTITION BY RANGE('||p_tables.part_column||')');
+				IF p_tables.organization = 'I' THEN
+					NULL; --25.5.2011 can't subpartition IOTs
+        	                ELSIF p_tables.subpart_type = 'H' AND 
+                                   p_tables.hash_partitions > 1 AND 
+                                   p_tables.subpart_column IS NOT NULL THEN
+                	                ins_line(4,'SUBPARTITION BY HASH ('||p_tables.subpart_column
+                                                   ||') SUBPARTITIONS '||p_tables.hash_partitions);
+				ELSIF p_tables.subpart_type = 'L' AND 
+                                      p_tables.subpart_column IS NOT NULL THEN
+                	                ins_line(4,'SUBPARTITION BY LIST ('||p_tables.subpart_column||')');
+                        	END IF;
+	                        tab_part_ranges(4,p_tables.recname,p_tables.part_id,
+				         	p_tables.subpart_type,p_tables.hash_partitions,'A',
+						l_arch_schema,l_arch_table_name,
+						COALESCE(p_tables.arch_recname,p_tables.recname,l_arch_table_name));
+			ELSIF p_tables.part_type = 'L' THEN
+	                        ins_line(4,'PARTITION BY LIST('||p_tables.part_column||')');
+	                        tab_part_lists(4,p_tables.recname,p_tables.part_id,
+				          p_tables.subpart_type,p_tables.hash_partitions,'A');
+			ELSIF p_tables.part_type = 'H' AND 
+                              p_tables.hash_partitions > 1 THEN
+				ins_line(4,'PARTITION BY HASH ('||p_tables.part_column||')');
+				tab_hashparts(p_type     =>4
+				             ,p_recname  =>p_tables.recname
+				             ,p_num_parts=>p_tables.hash_partitions);
+			ELSIF p_tables.subpart_type = 'L' AND 
+                              p_tables.subpart_column IS NOT NULL THEN
+				ins_line(4,'PARTITION BY LIST ('||p_tables.subpart_column||')');
+                        END IF;
+
+                        ins_line(0,'ENABLE ROW MOVEMENT');
+			ins_line(4,'LOGGING NOPARALLEL'); --always no parallel because we are going to partition exchange
+                        ins_line(4,'/');
+                        ins_line(4,'');
+
+                       	ins_line(4,'GRANT SELECT ON '||LOWER(l_arch_schema||'.'||l_arch_table_name)
+                                                     ||' TO '||LOWER(l_schema1));
+			ins_line(4,'/');
+               	        ins_line(4,'');
+
+                        mk_arch_indexes(4,p_tables.recname, l_arch_schema, l_arch_table_name, 
+					NVL(p_tables.arch_recname,p_tables.recname),'ARC'); 
+                        pause_sql(0);
+
+			IF p_tables.part_type IN('R','L') THEN
+	                        ins_line(4,'');
+        	                whenever_sqlerror(4,FALSE); 
+
+				add_tab_parts(4, p_tables.recname, l_arch_schema, l_arch_table_name, 
+			                      p_tables.part_id, p_tables.part_type, 
+				              p_tables.subpart_type, p_tables.hash_partitions, 
+				              'A', NVL(p_tables.arch_recname,p_tables.recname));
+				split_tab_parts(4, p_tables.recname, l_arch_schema, l_arch_table_name, 
+			                      p_tables.part_id, p_tables.part_type, 
+				              p_tables.subpart_type, p_tables.hash_partitions, 
+				              'A', NVL(p_tables.arch_recname,p_tables.recname));
+				IF p_tables.subpart_type = 'L' THEN
+					add_tab_subparts(4, p_tables.recname, l_arch_schema, l_arch_table_name, 
+				                         p_tables.part_id, p_tables.part_type, 
+					                 p_tables.subpart_type,
+					                 NVL(p_tables.arch_recname,p_tables.recname));
+
+				END IF;
+			END IF;
+
+			--grants required to enable PSARCH to do exchange
+			IF l_schema1 != l_arch_schema THEN
+                        	ins_line(5,'set echo on pause off verify on feedback on timi on autotrace off pause off lines 100');
+                	        ins_line(5,LOWER('spool gfcarch2_'||l_dbname||'_'||p_tables.recname||'.lst'));
+        	                signature(5,FALSE);
+				ins_line(5,'rem Partitioning Scheme '||p_tables.part_id);
+
+				--grant select, alter on base table to archive schema
+	                       	ins_line(5,'GRANT SELECT, INSERT, ALTER ON '||l_schema2||p_tables.base_sqltablename
+						||' TO '||LOWER(l_arch_schema));
+				ins_line(5,'/');
+               		        ins_line(5,'');
+				--grant insert on base table to archive schema if preserve clause 
+	                        ins_line(5,'spool off');
+			END IF;
+                        ins_line(4,'spool off');
+
+                END LOOP;
+		unset_action(p_action_name=>l_action);
+        END arch_tables;
+
 
 --process global temp tables
         PROCEDURE temp_tables  
@@ -3474,8 +4096,8 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
                 l_counter       INTEGER := 0;
                 l_counter_start INTEGER := 0;
                 l_suffix        VARCHAR2(3 CHAR);
-		l_module VARCHAR2(48);
-		l_action VARCHAR2(32);
+		l_module 	VARCHAR2(48);
+		l_action 	VARCHAR2(32);
 	BEGIN
 		dbms_application_info.read_module(module_name=>l_module, action_name=>l_action);
 		set_action(p_action_name=>'TEMP_TABLES');
@@ -4172,7 +4794,7 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
 		sys.dbms_output.enable(NULL);
 
 		sys.dbms_output.put_line('GFC_PSPART - Partitioned/Global Temporary Table DDL generator for PeopleSoft');
-		sys.dbms_output.put_line('(c)Go-Faster Consultancy Ltd. www.go-faster.co.uk 2001-2011');
+		sys.dbms_output.put_line('(c)Go-Faster Consultancy Ltd. www.go-faster.co.uk 2001-2012');
 
 		dbms_application_info.set_module(module_name=>l_module, action_name=>l_action);
 	END;
@@ -4404,7 +5026,7 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
 --this is the start of the processing
 	PROCEDURE main 
 	(p_recname     VARCHAR2 DEFAULT ''  --name of table(s) to be built-pattern matching possible-default null implies all
-        ,p_rectype     VARCHAR2 DEFAULT 'A' --Build (P)artitioned tables, Global (T)emp tables, or (A)ll tables - default ALL
+        ,p_rectype     VARCHAR2 DEFAULT 'A' --Build (P)artitioned tables, Global (T)emp tables, a(R)chive tables or (A)ll tables - default ALL
         ,p_projectname VARCHAR2 DEFAULT ''  --Build records in named Application Designer Project
 	)IS
 		l_module VARCHAR2(48);
@@ -4428,16 +5050,11 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
 		        truncate_tables;
 		END IF;
 
-	        gfc_ps_tables
-		(p_recname=>p_recname
-		,p_rectype=>p_rectype
-		);
-
+	        gfc_ps_tables(p_recname=>p_recname, p_rectype=>p_rectype);
         	gfc_project(p_projectname=>p_projectname);
-
 	        gfc_ps_tab_columns(p_recname=>p_recname);
 
-        	expand_sbr;
+--        	expand_sbr; -- 7.3.2012 if use psrecfielddb don't need to expand sub-records
 --      	shuffle_long;
 	        match_db;
 
@@ -4447,6 +5064,10 @@ CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
 		IF p_rectype IN('A','P') OR p_rectype IS NULL THEN
 		        create_roles;
 	        	part_tables(p_recname=>p_recname);
+		END IF;
+
+		IF p_rectype IN('A','R') OR p_rectype IS NULL THEN
+	        	arch_tables(p_recname=>p_recname);
 		END IF;
 
 		IF p_rectype IN('A','T') OR p_rectype IS NULL THEN
@@ -4464,4 +5085,16 @@ set echo off
 show errors
 spool off
 
-
+/*
+--create user psarch
+grant create session to psarch;
+grant resource to psarch;
+grant create table to psarch;
+grant create procedure to psarch;
+grant select on sys.dba_tables to psarch;
+grant select on sys.dba_tab_partitions to psarch;
+grant select on sysadm.psrecdefn to psarch;
+grant select on sysadm.gfc_part_tables to psarch;
+grant select on sysadm.gfc_part_ranges to psarch;
+@gfcarch_hcm90.sql
+*/
