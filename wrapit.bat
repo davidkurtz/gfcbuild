@@ -1,4 +1,4 @@
-set ORACLE_HOME=C:\app\oracle12\product\12.1.0\dbhome_1
+set ORACLE_HOME=C:\app\client\david.kurtz\product\12.1.0\client_1
 %ORACLE_HOME%\BIN\wrap iname=gfcbuildpkgbody.sql 
 pause
 

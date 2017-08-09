@@ -4887,9 +4887,7 @@ BEGIN
                              p_tables.part_id, p_tables.part_type, 
                              p_tables.subpart_type, p_tables.hash_partitions, 
                             'N', p_tables.recname);
-      END IF;
-
-      IF p_tables.subpart_type = 'L' THEN
+      ELSIF p_tables.subpart_type = 'L' THEN /*09.09.2017 - only if not repopulating maxvalue partition*/
         add_tab_subparts(k_alter, p_tables.recname, l_schema1, p_tables.table_name, 
                          p_tables.part_id, p_tables.part_type, 
                          p_tables.subpart_type, p_tables.recname,
