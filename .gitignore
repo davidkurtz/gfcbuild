@@ -38,6 +38,7 @@ $RECYCLE.BIN/
 .TemporaryItems
 .Trashes
 .VolumeIcon.icns
+.gitignore
 
 # Directories potentially created on remote AFP share
 .AppleDB
@@ -47,3 +48,4 @@ Temporary Items
 .apdisk
 
 *.zip
+wrapit.bat
