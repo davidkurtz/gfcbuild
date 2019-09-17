@@ -24,6 +24,7 @@ GRANT CREATE ANY CONTEXT TO sysadm;
 
 GRANT SELECT ON ps.psdbowner TO sysadm;
 
+GRANT SELECT ON sys.v_$session TO sysadm;
 GRANT SELECT ON sys.v_$parameter TO sysadm;
 GRANT SELECT ON sys.v_$version TO sysadm;
 GRANT SELECT ON sys.dba_tables TO sysadm;

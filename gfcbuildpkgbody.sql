@@ -13,7 +13,7 @@ spool gfcbuildpkgbody
 -- 7:print end of procedure reset action
 -- 9:debug for INS_LINE
 -------------------------------------------------------------------------------------------------------
-CREATE OR REPLACE PACKAGE BODY gfc_pspart AS
+CREATE OR REPLACE PACKAGE BODY sysadm.gfc_pspart AS
 -------------------------------------------------------------------------------------------------------
 -- spool Files
 k_build  CONSTANT INTEGER := 0; -- build peoplesoft tables
@@ -209,6 +209,7 @@ BEGIN
   sys.dbms_output.put_line('07.01.2015 - Fix indexes on subrecords in temporary tables');
   sys.dbms_output.put_line('02.03.2015 - Support for Interval partitioning');
   sys.dbms_output.put_line('01.08.2017 - Support for add partition to composite range partitioned table with maxvalue');
+  sys.dbms_output.put_line('17.09.2019 - Added sys_context( to read current_schema if not running as SYSADM');
   dbms_application_info.set_module(module_name=>l_module, action_name=>l_action);
 END history;
 
@@ -337,21 +338,24 @@ END write_context;
 
 -------------------------------------------------------------------------------------------------------
 -- get name of PeopleSoft database
+-- added 17.9.2019 added sys_context to read current_schema if not running as SYSADM
 -------------------------------------------------------------------------------------------------------
 PROCEDURE dbname IS
-  l_module v$session.module%type;
-  l_action v$session.action%type;
+  l_module   v$session.module%type;
+  l_action   v$session.action%type;
+  l_username v$session.username%type;
 BEGIN
   dbms_application_info.read_module(module_name=>l_module, action_name=>l_action);
   set_action(p_action_name=>'DBNAME');
 
+  l_username := NVL(sys_context('userenv','current_schema'),user);
+
   SELECT  UPPER(ownerid), MAX(dbname)
   INTO    l_schema1,l_dbname
   FROM    ps.psdbowner
-  WHERE   UPPER(ownerid) = user
-  GROUP BY UPPER(ownerid)
-  ;
-
+  WHERE   UPPER(ownerid) = l_username
+  GROUP BY UPPER(ownerid);
+  
   IF l_explicit_schema = 'Y' THEN
     l_schema2 := LOWER(l_schema1)||'.';
   ELSE

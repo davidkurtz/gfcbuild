@@ -10,8 +10,8 @@ EXECUTE gfc_partdata.partdata;
 -----------------------------------------------------------------------------------------------------------
 set serveroutput on buffer 1000000000 
 execute gfc_pspart.reset_defaults;
-execute gfc_pspart.set_defaults(p_read_all=>'WMS_READ_ONLY');
-execute gfc_pspart.set_defaults(p_update_all=>'WMS_UPDATE');
+execute gfc_pspart.set_defaults(p_read_all=>'SYSADM_READ');
+execute gfc_pspart.set_defaults(p_update_all=>'SYSADM_READWRITE');
 execute gfc_pspart.set_defaults(p_roles => 'Y');
 execute gfc_pspart.set_defaults(p_ddlenable  => 'BEGIN psft_ddl_lock.set_ddl_permitted(TRUE); END;'||CHR(10)||'/');
 execute gfc_pspart.set_defaults(p_ddldisable => 'BEGIN psft_ddl_lock.set_ddl_permitted(FALSE); END;'||CHR(10)||'/');
@@ -28,7 +28,7 @@ column part_id          format a8      heading 'Part ID'
 column part_no          format 9999.90 heading 'Part|No.'
 column part_type        format a4      heading 'Part|Type'
 column part_name        format a15     heading 'Part|Name'
-column part_column      format a13     heading 'Part|Column'
+column part_column      format a20     heading 'Part|Column'
 column subpart_type     format a4      heading 'SubP|Type'
 column subpart_column   format a14     heading 'Sub-Part|Column'
 column hash_partitions  format 999     heading 'Hash|Parts'
@@ -37,7 +37,7 @@ column idx_tablespace   format a20     heading 'Index|TblSpc'
 column tab_storage      format a20     heading 'Table|Storage Clause'
 column idx_storage      format a20     heading 'Index|Storage Clause'
 column sample_size      format 999     heading 'Sample|Size %'
-column method_opt       format a10     heading 'Optimization|Method'
+column method_opt       format a20     heading 'Optimization|Method'
 column override_schema  format a10     heading 'Override|Schema'
 column part_value       format a30     heading 'Part|Value'
 column list_value       format a85     heading 'List|Value'

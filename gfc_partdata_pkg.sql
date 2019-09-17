@@ -128,6 +128,7 @@ IS
   k_action CONSTANT VARCHAR2(48) := 'DEL_PARTDATA';
   l_module VARCHAR2(48);
   l_action VARCHAR2(32);
+  l_num_rows INTEGER; --variable to hold number of rows processed
 BEGIN
   dbms_application_info.read_module(module_name=>l_module, action_name=>l_action);
   dbms_application_info.set_module(module_name=>k_module, action_name=>k_action);
@@ -135,11 +136,12 @@ BEGIN
   msg('Delete pre-existing list of '||p_part_id||' global indexes');
   DELETE FROM gfc_part_indexes 
   WHERE part_id LIKE p_part_id;
-  msg(TO_CHAR(SQL%ROWCOUNT)||' rows deleted.');
-  DELETE FROM gfc_part_indexes WHERE recname IN (SELECT recname FROM gfC_part_tables WHERE part_id LIKE p_part_id);
-  msg(TO_CHAR(SQL%ROWCOUNT)||' rows deleted.');
-  DELETE FROM gfc_part_indexes WHERE NOT recname IN (SELECT recname FROM gfC_part_tables);
-  msg(TO_CHAR(SQL%ROWCOUNT)||' rows deleted.');
+  l_num_rows := SQL%ROWCOUNT;
+  DELETE FROM gfc_part_indexes WHERE recname IN (SELECT recname FROM gfc_part_tables WHERE part_id LIKE p_part_id);
+  l_num_rows := l_num_rows + SQL%ROWCOUNT;
+  DELETE FROM gfc_part_indexes WHERE NOT recname IN (SELECT recname FROM gfc_part_tables);
+  l_num_rows := l_num_rows + SQL%ROWCOUNT;
+  msg(TO_CHAR(l_num_rows)||' rows deleted.');
 
   msg('Delete pre-existing list of partitioned '||p_part_id||' tables');
   DELETE FROM gfc_part_tables 

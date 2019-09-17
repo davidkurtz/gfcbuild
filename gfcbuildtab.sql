@@ -13,6 +13,7 @@ WHENEVER SQLERROR CONTINUE
 
 ROLLBACK;
 ALTER SESSION SET recyclebin = off;
+ALTER SESSION SET current_schema=SYSADM;
 
 DROP TABLE sysadm.gfc_ps_tables PURGE;
 DROP TABLE sysadm.gfc_ps_tab_columns PURGE;

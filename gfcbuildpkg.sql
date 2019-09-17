@@ -4,6 +4,8 @@ rem (c) Go-Faster Consultancy Ltd.
 spool gfcbuildpkg
 
 set serveroutput on buffer 1000000000 verify on feedback on lines 120 timing off autotrace off pause off echo off termout on
+ALTER SESSION SET recyclebin = off;
+ALTER SESSION SET current_schema=SYSADM;
 --set echo on
 
 --@@gfcbuildtab.sql--removed 1.11.2012 because it could cause accidental loss of additional privileges on metadata tables
@@ -11,7 +13,7 @@ set serveroutput on buffer 1000000000 verify on feedback on lines 120 timing off
 -----------------------------------------------------------------------------------------------------------
 --now build the package
 -----------------------------------------------------------------------------------------------------------
-CREATE OR REPLACE PACKAGE gfc_pspart AS
+CREATE OR REPLACE PACKAGE sysadm.gfc_pspart AS
 
 -----------------------------------------------------------------------------------------------------------
 --Version and Copyright banner
@@ -94,8 +96,8 @@ END gfc_pspart;
 /
 
 -----------------------------------------------------------------------------------------------------------
---@@gfcbuildpkgbody.sql
-@@gfcbuildpkgbody.plb
+@@gfcbuildpkgbody.sql
+--@@gfcbuildpkgbody.plb
 -----------------------------------------------------------------------------------------------------------
 spool gfcbuildpkg-check
 execute gfc_pspart.history;
