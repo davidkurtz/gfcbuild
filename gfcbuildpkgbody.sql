@@ -210,6 +210,7 @@ BEGIN
   sys.dbms_output.put_line('02.03.2015 - Support for Interval partitioning');
   sys.dbms_output.put_line('01.08.2017 - Support for add partition to composite range partitioned table with maxvalue');
   sys.dbms_output.put_line('17.09.2019 - Added sys_context( to read current_schema if not running as SYSADM');
+  sys.dbms_output.put_line('10.08.2020 - From 19c, v$version only has a single version row');
   dbms_application_info.set_module(module_name=>l_module, action_name=>l_action);
 END history;
 
@@ -374,13 +375,10 @@ BEGIN
   dbms_application_info.read_module(module_name=>l_module, action_name=>l_action);
   set_action(p_action_name=>'ORAVER');
 
-  SELECT  TO_NUMBER(SUBSTR(banner,1,INSTR(banner,'.',1,2)-1)) version
+  SELECT  REGEXP_SUBSTR(banner, '[0-9]+\.[0-9]+') version
   INTO    l_oraver
-  FROM    (
-          SELECT  SUBSTR(banner,6) banner
-          FROM    v$version
-          WHERE   banner LIKE 'CORE%'
-          )
+  FROM    v$version
+  WHERE   rownum <= 1
   ;
 
   IF l_oraver < 10 THEN
