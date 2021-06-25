@@ -50,6 +50,8 @@ column arch_recname     format a15     heading 'Archive Record'
 column arch_table_name  format a20     heading 'Archive Table'
 column arch_flag        format a4      heading 'Arch|Flag'
 column noarch_condition format a40     heading 'No Archive Condition'
+column name_suffix      format a10     heading 'Name|Suffix'
+column partial_index    format a7      heading 'Partial|Index'
 set lines 110 pages 50 echo off timi off
 spool partdata
 

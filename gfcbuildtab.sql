@@ -36,14 +36,14 @@ DROP VIEW  sysadm.gfc_part_range_lists;
 CREATE
 --GLOBAL TEMPORARY
 TABLE sysadm.gfc_ps_tables
-(recname                VARCHAR2(15)    NOT NULL
-,table_name             VARCHAR2(18)    NOT NULL
-,table_type             VARCHAR2(1)
-,rectype                NUMBER
-,temptblinstances       NUMBER
-,tempinstanceonline     NUMBER --10.2.2015 added
-,override_schema        VARCHAR2(30)
-,match_db               VARCHAR2(30)
+(recname            VARCHAR2(15)    NOT NULL
+,table_name         VARCHAR2(18)    NOT NULL
+,table_type         VARCHAR2(1)
+,rectype            NUMBER
+,temptblinstances   NUMBER
+,tempinstanceonline NUMBER --10.2.2015 added
+,override_schema    VARCHAR2(30)
+,match_db           VARCHAR2(30)
 ,CONSTRAINT gfc_ps_tables PRIMARY KEY(recname)
 );
 
@@ -51,11 +51,11 @@ TABLE sysadm.gfc_ps_tables
 CREATE
 --GLOBAL TEMPORARY
 TABLE sysadm.gfc_ps_tab_columns
-(recname        VARCHAR2(15)    NOT NULL
-,fieldname      VARCHAR2(18)    NOT NULL
-,useedit        number          NOT NULL
-,fieldnum       number          NOT NULL
-,subrecname     VARCHAR2(15)    NOT NULL
+(recname         VARCHAR2(15)    NOT NULL
+,fieldname       VARCHAR2(18)    NOT NULL
+,useedit         number          NOT NULL
+,fieldnum        number          NOT NULL
+,subrecname      VARCHAR2(15)    NOT NULL
 ,CONSTRAINT gfc_ps_tab_columns PRIMARY KEY(recname, fieldname)
 );
 
@@ -63,9 +63,9 @@ TABLE sysadm.gfc_ps_tab_columns
 CREATE
 --GLOBAL TEMPORARY
 TABLE sysadm.gfc_ora_tab_columns
-(table_name	VARCHAR2(30)	NOT NULL
-,column_name	VARCHAR2(30)	NOT NULL
-,column_id	NUMBER 		NOT NULL
+(table_name	     VARCHAR2(30)	 NOT NULL
+,column_name     VARCHAR2(30)	 NOT NULL
+,column_id	     NUMBER 		 NOT NULL
 ,CONSTRAINT gfc_ora_tab_columns PRIMARY KEY(table_name, column_name)
 ,CONSTRAINT gfc_ora_tab_columns_idx2 UNIQUE(table_name, column_id)
 );
@@ -74,14 +74,14 @@ TABLE sysadm.gfc_ora_tab_columns
 CREATE
 --GLOBAL TEMPORARY
 TABLE sysadm.gfc_ps_indexdefn
-(recname        VARCHAR2(15)    NOT NULL
-,indexid        VARCHAR2(1)     NOT NULL
-,subrecname     VARCHAR2(15)    NOT NULL
-,subindexid     VARCHAR2(1)     NOT NULL
-,platform_ora   NUMBER          NOT NULL
-,custkeyorder   NUMBER          NOT NULL --6.9.2007
-,uniqueflag     NUMBER          NOT NULL --6.9.2007    
-,name_suffix	VARCHAR2(20)	--16.6.2010
+(recname         VARCHAR2(15)    NOT NULL
+,indexid         VARCHAR2(1)     NOT NULL
+,subrecname      VARCHAR2(15)    NOT NULL
+,subindexid      VARCHAR2(1)     NOT NULL
+,platform_ora    NUMBER          NOT NULL
+,custkeyorder    NUMBER          NOT NULL --6.9.2007
+,uniqueflag      NUMBER          NOT NULL --6.9.2007    
+,name_suffix	 VARCHAR2(20)	--16.6.2010
 ,CONSTRAINT gfc_ps_indexdefn PRIMARY KEY(recname, indexid)
 ,CONSTRAINT gfc_ps_indexdefn2 UNIQUE(subrecname, subindexid)
 );
@@ -90,11 +90,11 @@ TABLE sysadm.gfc_ps_indexdefn
 CREATE
 --GLOBAL TEMPORARY
 TABLE sysadm.gfc_ps_keydefn
-(recname        VARCHAR2(15)    NOT NULL
-,indexid        VARCHAR2(1)     NOT NULL
-,keyposn        NUMBER          NOT NULL
-,fieldname      VARCHAR2(100)   NOT NULL --6.9.2007
-,ascdesc	    NUMBER		    NOT NULL --1=ascending, 0=descending
+(recname         VARCHAR2(15)    NOT NULL
+,indexid         VARCHAR2(1)     NOT NULL
+,keyposn         NUMBER          NOT NULL
+,fieldname       VARCHAR2(100)   NOT NULL --6.9.2007
+,ascdesc	     NUMBER		     NOT NULL --1=ascending, 0=descending
 ,CONSTRAINT gfc_ps_keydefn PRIMARY KEY(recname,indexid,keyposn)
 ,CONSTRAINT gfc_ps_keydefn2 UNIQUE(recname,indexid,fieldname)
 );
@@ -103,26 +103,28 @@ TABLE sysadm.gfc_ps_keydefn
 CREATE
 --GLOBAL TEMPORARY
 TABLE sysadm.gfc_ps_idxddlparm
-(recname        VARCHAR2(15)    NOT NULL
-,indexid	    VARCHAR2(18)    NOT NULL
-,parmname	    VARCHAR2(8)     NOT NULL
-,parmvalue	    VARCHAR2(128)   NOT NULL
+(recname         VARCHAR2(15)    NOT NULL
+,indexid	     VARCHAR2(18)    NOT NULL
+,parmname	     VARCHAR2(8)     NOT NULL
+,parmvalue	     VARCHAR2(128)   NOT NULL
 ,CONSTRAINT gfc_ps_idxddlparm PRIMARY KEY(recname,indexid,parmname)
 );
 
 CREATE 
 --GLOBAL TEMPORARY
 TABLE sysadm.gfc_part_ranges
-(part_id        VARCHAR2(8)   NOT NULL --ID of partitioning schema
-,part_no        NUMBER        NOT NULL --sequence number of range
-,part_name      VARCHAR2(30)  NOT NULL --this goes into the partition names
-,part_value     VARCHAR2(100) NOT NULL --range less than value
-,tab_tablespace VARCHAR2(30)
-,idx_tablespace VARCHAR2(30)
-,tab_storage    VARCHAR2(100)
-,idx_storage    VARCHAR2(100)
-,arch_flag      VARCHAR2(1)   DEFAULT 'N' NOT NULL --N=not archived, A=archive D=delete/drop
+(part_id         VARCHAR2(8)     NOT NULL --ID of partitioning schema
+,part_no         NUMBER          NOT NULL --sequence number of range
+,part_name       VARCHAR2(30)    NOT NULL --this goes into the partition names
+,part_value      VARCHAR2(100)   NOT NULL --range less than value
+,tab_tablespace  VARCHAR2(30)
+,idx_tablespace  VARCHAR2(30)
+,tab_storage     VARCHAR2(100)
+,idx_storage     VARCHAR2(100)
+,arch_flag       VARCHAR2(1)     DEFAULT 'N' NOT NULL --N=not archived, A=archive D=delete/drop
  CONSTRAINT gfc_part_ranges_arch CHECK (arch_flag IN('A','D','N'))
+,partial_index   VARCHAR2(1)     DEFAULT 'N' --26.11.2020 add partial index control at partition level
+ CONSTRAINT gfc_part_ranges_partial CHECK (partial_index IN('Y','N')) --Y=on, N=off
 ,CONSTRAINT gfc_part_ranges PRIMARY KEY (part_id, part_no)
 ,CONSTRAINT gfc_part_ranges2 UNIQUE(part_id, part_name)
 );
@@ -154,7 +156,7 @@ TABLE sysadm.gfc_part_tables
 ,override_schema  VARCHAR2(30)
 ,src_table_name   VARCHAR2(30)   --8.6.2010 use this table as source for data during build - if null use same record
 ,criteria         VARCHAR2(1000) --crieria to be applied to partitioned table to filter rows during rebuild
-,arch_flag        VARCHAR2(1)   DEFAULT 'N' NOT NULL --N=not archived, A=archive D=delete/drop
+,arch_flag        VARCHAR2(1)    DEFAULT 'N' NOT NULL --N=not archived, A=archive D=delete/drop
  CONSTRAINT gfc_part_tables_arch CHECK (arch_flag IN('A','D','N'))
 ,arch_schema      VARCHAR2(30)	 --schema of archive table (else db owner schema or override schema)
 ,arch_table_name  VARCHAR2(30)   --name of archive table (else taken from record definition)
@@ -174,17 +176,19 @@ TABLE sysadm.gfc_part_indexes
 ,part_id         VARCHAR2(8) 	NOT NULL --ID of partitioning strategy.  Many tables can share one 
 ,part_column     VARCHAR2(100) 	NOT NULL --range partitioning column, or comma separated columns
 ,part_type       VARCHAR2(1)    NOT NULL --(R)ange or (L)ist, (H)ash or (N)ot Partitioned
- CONSTRAINT index_part_type CHECK (part_type IN('R','L','H','N'))
-,subpart_type    VARCHAR2(1) DEFAULT 'N' --(L)ist or (H)ash only 
- CONSTRAINT index_subpart_type CHECK (subpart_type IN('R','L','H','N'))
+ CONSTRAINT gfc_part_indexes_part_type CHECK (part_type IN('R','L','H','N'))
+,subpart_type    VARCHAR2(1)    DEFAULT 'N' --(L)ist or (H)ash only 
+ CONSTRAINT gfc_part_indexes_subpart_type CHECK (subpart_type IN('R','L','H','N'))
 ,subpart_column  VARCHAR2(100) 		 --sub partitioning column
 ,hash_partitions NUMBER --number of hash partitions
- CONSTRAINT indexes_hash_partitions_pos CHECK(hash_partitions>=0)
+ CONSTRAINT gfc_part_indexes_hash_partitions_pos CHECK(hash_partitions>=0)
 ,idx_tablespace  VARCHAR2(30)
 ,idx_storage     VARCHAR2(100)  DEFAULT 'PCTFREE **PCTFREE**' NOT NULL 
 ,override_schema VARCHAR2(30)
 ,name_suffix     VARCHAR2(20)	--16.6.2010
-,CONSTRAINT index_gfc_part_tables PRIMARY KEY(recname, indexid)
+,partial_index   VARCHAR2(1)    --26.11.2020 add partial index control at index level
+ CONSTRAINT gfc_part_indexes_partial CHECK (partial_index IN('Y','N')) --Y=partial else not
+,CONSTRAINT gfc_part_indexes_tables PRIMARY KEY(recname, indexid)
 );
 
 CREATE 
@@ -198,8 +202,10 @@ TABLE sysadm.gfc_part_lists
 ,idx_tablespace  VARCHAR2(30)
 ,tab_storage     VARCHAR2(100)
 ,idx_storage     VARCHAR2(100)
-,arch_flag       VARCHAR2(1)   DEFAULT 'N' NOT NULL --N=not archived, A=archive D=delete/drop
+,arch_flag       VARCHAR2(1)    DEFAULT 'N' NOT NULL --N=not archived, A=archive D=delete/drop
  CONSTRAINT gfc_part_lists_arch CHECK (arch_flag IN('A','D','N'))
+,partial_index   VARCHAR2(1)    --26.11.2020 add partial index control at partition level
+ CONSTRAINT gfc_part_lists_partial CHECK (partial_index IN('Y','N')) --Y=on, N=off
 ,CONSTRAINT gfc_part_lists PRIMARY KEY (part_id, part_no)
 ,CONSTRAINT gfc_part_lists2 UNIQUE(part_id, part_name)
 );

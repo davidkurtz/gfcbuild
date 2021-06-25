@@ -211,6 +211,7 @@ BEGIN
   sys.dbms_output.put_line('01.08.2017 - Support for add partition to composite range partitioned table with maxvalue');
   sys.dbms_output.put_line('17.09.2019 - Added sys_context( to read current_schema if not running as SYSADM');
   sys.dbms_output.put_line('10.08.2020 - From 19c, v$version only has a single version row');
+  sys.dbms_output.put_line('26.11.2020 - Support for partial indexing');
   dbms_application_info.set_module(module_name=>l_module, action_name=>l_action);
 END history;
 
@@ -1894,6 +1895,15 @@ PROCEDURE tab_rangesubparts(p_type NUMBER, p_recname VARCHAR2
                 ins_line(p_type,l_part_def);
 
 		l_part_def := ' VALUES LESS THAN ('||t.part_value||')';
+				IF LENGTH(l_part_def) > 70 THEN --26.11.2020 added partial index support
+					ins_line(p_type,l_part_def);
+					l_part_def := '';
+				END IF;
+				IF t.partial_index = 'Y' THEN
+					l_part_def := l_part_def||' INDEXING ON';
+				ELSIF t.partial_index = 'N' THEN
+					l_part_def := l_part_def||' INDEXING OFF';
+				END IF;
                 ins_line(p_type,l_part_def);
                 l_part_def := '';
 
@@ -1963,6 +1973,15 @@ PROCEDURE tab_listsubparts(p_type NUMBER, p_recname VARCHAR2
                 ins_line(p_type,l_part_def);
 
                 l_part_def := ' VALUES ('||t.list_value||')';
+				IF LENGTH(l_part_def) > 70 THEN --26.11.2020 added partial index support
+					ins_line(p_type,l_part_def);
+					l_part_def := '';
+				END IF;
+				IF t.partial_index = 'Y' THEN
+					l_part_def := l_part_def||' INDEXING ON';
+				ELSIF t.partial_index = 'N' THEN
+					l_part_def := l_part_def||' INDEXING OFF';
+				END IF;
                 ins_line(p_type,l_part_def);
                 l_part_def := '';
 
@@ -2156,14 +2175,23 @@ PROCEDURE tab_part_ranges(p_type NUMBER, p_recname VARCHAR2, p_part_id VARCHAR2,
 	                        ins_line(p_type,l_part_def);
 				l_part_def := '';
 			END IF;
-                        IF p_tab_part_ranges.tab_tablespace IS NOT NULL THEN
-                                l_part_def := l_part_def||' TABLESPACE '||p_tab_part_ranges.tab_tablespace;
-                        END IF;
-                        IF p_tab_part_ranges.tab_storage IS NOT NULL THEN
-                                l_part_def := l_part_def||' '||tab_storage(p_recname, p_tab_part_ranges.tab_storage); -- 6.9.2007
+			IF p_tab_part_ranges.partial_index = 'Y' THEN
+				l_part_def := l_part_def||' INDEXING ON';
+			ELSIF p_tab_part_ranges.partial_index = 'N' THEN
+				l_part_def := l_part_def||' INDEXING OFF';
                         END IF;
 			IF LENGTH(l_part_def) > 0 THEN
 	                        ins_line(p_type,l_part_def);
+				l_part_def := '';
+			END IF;
+            IF p_tab_part_ranges.tab_tablespace IS NOT NULL THEN
+                l_part_def := l_part_def||' TABLESPACE '||p_tab_part_ranges.tab_tablespace;
+            END IF;
+            IF p_tab_part_ranges.tab_storage IS NOT NULL THEN
+                l_part_def := l_part_def||' '||tab_storage(p_recname, p_tab_part_ranges.tab_storage); -- 6.9.2007
+            END IF;
+			IF LENGTH(l_part_def) > 0 THEN
+				ins_line(p_type,l_part_def);
 				l_part_def := '';
 			END IF;
                         IF p_subpart_type = 'H' AND p_subpartitions > 1 THEN
@@ -2245,8 +2273,17 @@ PROCEDURE tab_part_lists(p_type NUMBER, p_recname VARCHAR2, p_part_id VARCHAR2,
                         l_part_def := l_part_def||'PARTITION '||LOWER(p_recname||'_'||p_tab_part_lists.part_name);
                         ins_line(p_type,l_part_def);
 			l_part_def := ' VALUES ('||p_tab_part_lists.list_value||')';
+						IF LENGTH(l_part_def) > 70 THEN --26.11.2020 added partial index support
+							ins_line(p_type,l_part_def);
+							l_part_def := '';
+						END IF;
+						IF p_tab_part_lists.partial_index = 'Y' THEN
+							l_part_def := l_part_def||' INDEXING ON';
+						ELSIF p_tab_part_lists.partial_index = 'N' THEN
+							l_part_def := l_part_def||' INDEXING OFF';
+						END IF;
                         ins_line(p_type,l_part_def);
-			l_part_def := '';
+            			l_part_def := '';
                         IF p_tab_part_lists.tab_tablespace IS NOT NULL THEN
                                 l_part_def := l_part_def||' TABLESPACE '||p_tab_part_lists.tab_tablespace;
                         END IF;
@@ -2670,15 +2707,21 @@ PROCEDURE mk_part_indexes(p_recname    VARCHAR2
 	                ,        NVL(i.part_type,p.part_type) part_type
 	                ,        NVL(i.part_column,p.part_column) part_column
 	                ,        NVL(i.subpart_type,p.subpart_type) subpart_type
+					,        NVL(i.hash_partitions,p.hash_partitions) hash_partitions
 	                ,        NVL(i.subpart_column,p.subpart_column) subpart_column 
-			,        NVL(i.hash_partitions,p.hash_partitions) hash_partitions
-			, 	 NVL(i.idx_tablespace,p.idx_tablespace) idx_tablespace
+					, 	     NVL(i.idx_tablespace,p.idx_tablespace) idx_tablespace
 	                ,        NVL(i.idx_storage,p.idx_storage) idx_storage
 	                ,        NVL(i.override_schema,p.override_schema) override_schema
 			,        CASE WHEN p.part_type = 'N' THEN 'G' -- added 9.11.2011 to support partitioned indexes on non-partitioned tables
-                                      WHEN i.indexid IS NULL OR i.part_type = 'L' THEN 'L'
- 			              ELSE 'G'
-			         END AS ind_part_type
+                                  WHEN i.indexid IS NULL THEN 'L' -- separated 20.11.2020 
+								  WHEN i.part_type = p.part_type  -- added 20.11.2020 to match table to index partitioning
+								   AND i.part_column = p.part_column 
+								   AND (i.subpart_type = p.subpart_type OR i.subpart_type IS NULL) 
+								   AND (i.subpart_column = p.subpart_column OR i.subpart_column IS NULL) THEN 'L'
+					              WHEN i.part_type = 'L' THEN 'L'
+ 			                      ELSE 'G'
+			                 END AS ind_part_type
+					,        i.partial_index
 			,        i.name_suffix
         	        FROM     gfc_ps_indexdefn g -- 6.9.2007 removed psindexdefn
 			         LEFT OUTER JOIN gfc_part_indexes i
@@ -2743,8 +2786,7 @@ PROCEDURE mk_part_indexes(p_recname    VARCHAR2
 					          p_owner=>p_schema,
 					          p_index_prefix=>'PS',
 					          p_part_name=>p_recname);
-					ELSIF p_indexes.part_type = 'H' AND 
-					      p_indexes.hash_partitions > 1 THEN
+							ELSIF p_indexes.part_type = 'H' AND p_indexes.hash_partitions > 1 THEN
 						ind_hashparts(l_type,p_recname
 					                    ,p_indexes.indexid,p_indexes.hash_partitions);
 					END IF;
@@ -2778,6 +2820,11 @@ PROCEDURE mk_part_indexes(p_recname    VARCHAR2
 					             ,p_num_parts=>p_indexes.hash_partitions);
 
 				END IF;
+
+						IF p_indexes.partial_index = 'Y' THEN --added 26.11.2020 partial indexing support
+							ins_line(l_type,'INDEXING PARTIAL');
+						END IF;
+
 				-- index level storage clause
                                 IF p_indexes.idx_tablespace IS NOT NULL THEN
 	                                ins_line(l_type,'TABLESPACE '||p_indexes.idx_tablespace);
