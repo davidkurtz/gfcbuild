@@ -650,13 +650,24 @@ BEGIN
         );
   msg(TO_CHAR(SQL%ROWCOUNT)||' rows inserted.');
 
+  BEGIN
+    INSERT INTO gfc_part_indexes
+    (recname, indexid, part_id, part_type, part_column, subpart_type, partial_index)
+    VALUES
+    ('PSWORKLIST', 'B', 'WL', 'L', 'INSTSTATUS', 'N', 'Y');
+  EXCEPTION WHEN dup_val_on_index THEN
+    UPDATE gfc_part_indexes
+	SET    part_type = 'R', partial_index = 'Y'
+	WHERE  recname = 'PSWORKLIST'
+	AND    indexid = 'B';
+  END;
 
   l_num_rows := 0;
   msg('Populating WL Range Partitions');
-  INSERT INTO gfc_part_ranges (part_id, part_no, part_name, part_value) VALUES('WL',2,'SELECT_OPEN' ,'''2''');
+  INSERT INTO gfc_part_ranges (part_id, part_no, part_name, part_value, partial_index) VALUES('WL',2,'SELECT_OPEN' ,'''2''', 'Y');
   l_num_rows := l_num_rows +SQL%ROWCOUNT;
-  INSERT INTO gfc_part_ranges (part_id, part_no, part_name, part_value, tab_storage, idx_storage) 
-  VALUES('WL',9,'WORKED_CANC','MAXVALUE','PCTFREE 1 PCTUSED 90','PCTFREE 1');
+  INSERT INTO gfc_part_ranges (part_id, part_no, part_name, part_value, tab_storage, idx_storage, partial_index) 
+  VALUES('WL',9,'WORKED_CANC','MAXVALUE','PCTFREE 1 PCTUSED 90','PCTFREE 1','N');
   l_num_rows := l_num_rows +SQL%ROWCOUNT;
 
   msg(TO_CHAR(l_num_rows)||' rows inserted.');
@@ -825,7 +836,7 @@ exec_sql('TRUNCATE TABLE gfc_part_subparts');
 exec_sql('TRUNCATE TABLE gfc_part_indexes');
 
 --gp_partdata;
---wl_partdata;
+wl_partdata;
 ppm_partdata;
 
 --------------------------------------------------------------------------------------------------------------
