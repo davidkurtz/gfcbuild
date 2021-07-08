@@ -1,5 +1,6 @@
-rem PSFT_DDL_LOCK: DDL Trigger to protect objects not managed by PeopleTools on PeopleSoft tables
-rem (c) Go-Faster Consultancy Ltd.
+rem psft_ddl_lock.sql
+rem (c) Go-Faster Consultancy 
+rem DDL Trigger to protect objects not managed by PeopleTools on PeopleSoft tables
 rem documentation: http://blog.psftdba.com/2006/04/using-ddl-triggers-to-protect-database.html
 rem 17. 8.2006 initial version
 rem 11.10.2006 enhancement to cater for keys defined on sub-records, omit peoplesoft alternate and key index
@@ -9,6 +10,7 @@ rem 12.11.2007 enhancements to support key fields on subrecords
 rem 10.01.2008 remove any checks on explicit DDL on triggers
 rem 06.07.2009 enhancements to support PS temp record and global temp table shadow table trigger - www.go-faster.co.uk/scripts.htm#gfc_temp_table_type.sql
 rem 02.06.2011 introduce package function to disable trigger just for current session
+rem 02.07.2021 removed additional paramters from dbms_stats.gather_table_stats
 /*-----------------------------------------------------------------------------------------------------------
 rem Summary of Error Codes
 rem 20000-Generate No Data Found Error.  Should be impossible.
@@ -33,16 +35,17 @@ rem 20018-DDL on Index of Table with shadow Global Temporary Table
 -----------------------------------------------------------------------------------------------------------*/
 set echo on feedback on verify on lines 100 timi on 
 spool psft_ddl_lock
-
-CREATE INDEX pszpsrecdefn_fbi 
-ON psrecdefn (DECODE(sqltablename,' ','PS_'||recname,sqltablename))
+---------------------------------------------------------------------------------------
+@@psdbowner
+---------------------------------------------------------------------------------------
+CREATE INDEX &&ownerid..pszpsrecdefn_fbi 
+ON &&ownerid..psrecdefn (DECODE(sqltablename,' ','PS_'||recname,sqltablename))
 TABLESPACE PSINDEX PCTFREE 0;  
-CREATE INDEX pszpsrecfielddb ON psrecfielddb (recname, recname_parent, fieldname) 
+CREATE INDEX &&ownerid..pszpsrecfielddb ON &&ownerid..psrecfielddb (recname, recname_parent, fieldname) 
 TABLESPACE psindex PCTFREE 1 COMPRESS 1;
-
 ---------------------------------------------------------------------------------------
 ---------------------------------------------------------------------------------------
-CREATE OR REPLACE PACKAGE psft_ddl_lock AS 
+CREATE OR REPLACE PACKAGE &&ownerid..psft_ddl_lock AS 
 
 ---------------------------------------------------------------------------------------
 --Write process instance number into a global PL/SQL variable to be used later
@@ -63,7 +66,7 @@ show errors
 
 ---------------------------------------------------------------------------------------
 ---------------------------------------------------------------------------------------
-CREATE OR REPLACE PACKAGE BODY psft_ddl_lock AS 
+CREATE OR REPLACE PACKAGE BODY &&ownerid..psft_ddl_lock AS 
 ---------------------------------------------------------------------------
 g_ddl_permitted BOOLEAN; --variables that are global to package only.
 ---------------------------------------------------------------------------
@@ -93,9 +96,9 @@ show errors
 
 ---------------------------------------------------------------------------
 ---------------------------------------------------------------------------
-CREATE OR REPLACE TRIGGER psft_ddl_lock 
+CREATE OR REPLACE TRIGGER &&ownerid..psft_ddl_lock 
 BEFORE DROP OR ALTER OR RENAME
-ON SYSADM.SCHEMA --you PeopleSoft schema is not sysadm then you need to change this.
+ON &&ownerid..SCHEMA 
 DECLARE
  e_generate_message EXCEPTION;
  l_recname     VARCHAR2(15 CHAR); --peoplesoft record name
@@ -548,11 +551,11 @@ pause
 BEGIN
   FOR i IN (SELECT table_name FROM user_tables WHERE table_name IN('PSRECDEFN','PSRECFIELDDB')) LOOP
     sys.dbms_stats.gather_table_Stats
-      (ownname => 'SYSADM'
+      (ownname => '&&ownerid'
       ,tabname => i.table_name
-      ,estimate_percent => DBMS_STATS.AUTO_SAMPLE_SIZE
-      ,method_opt => 'FOR COLUMNS SIZE AUTO'
-      ,cascade => TRUE
+--    ,estimate_percent => DBMS_STATS.AUTO_SAMPLE_SIZE
+--    ,method_opt => 'FOR COLUMNS SIZE AUTO'
+--    ,cascade => TRUE
       );
   END LOOP;
 END;

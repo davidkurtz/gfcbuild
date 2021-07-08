@@ -1,10 +1,12 @@
 rem gfcbuildtab.sql
-rem (c) Go-Faster Consultancy Ltd.
+rem (c) Go-Faster Consultancy
 rem tables and views required by gfcbuildpkg.sql
 rem 16.09.2009 - extracted from gfcbuildpkg.sql
 rem 20.10.2014 - replace gfc_part_range_lists with gfc_part_subparts
 rem 10.02.2015 - added tempinstanceonline count
 rem 02.03.2015 - increase method_opt to 200, interval range partitioning
+rem 25.06.2021 - Extract ownerid from ps.psdbowner
+
 clear screen
 set echo on
 spool gfcbuildtab
@@ -12,30 +14,32 @@ spool gfcbuildtab
 WHENEVER SQLERROR CONTINUE
 
 ROLLBACK;
+
+@@psownerid
 ALTER SESSION SET recyclebin = off;
-ALTER SESSION SET current_schema=SYSADM;
+ALTER SESSION SET current_schema=&&ownerid;
 
-DROP TABLE sysadm.gfc_ps_tables PURGE;
-DROP TABLE sysadm.gfc_ps_tab_columns PURGE;
-DROP TABLE sysadm.gfc_ora_tab_columns PURGE;
-DROP TABLE sysadm.gfc_ps_indexdefn PURGE;
-DROP TABLE sysadm.gfc_ps_keydefn PURGE;
-DROP TABLE sysadm.gfc_ddl_script PURGE;
-DROP TABLE sysadm.gfc_ps_idxddlparm PURGE;
+DROP TABLE &&ownerid..gfc_ps_tables PURGE;
+DROP TABLE &&ownerid..gfc_ps_tab_columns PURGE;
+DROP TABLE &&ownerid..gfc_ora_tab_columns PURGE;
+DROP TABLE &&ownerid..gfc_ps_indexdefn PURGE;
+DROP TABLE &&ownerid..gfc_ps_keydefn PURGE;
+DROP TABLE &&ownerid..gfc_ddl_script PURGE;
+DROP TABLE &&ownerid..gfc_ps_idxddlparm PURGE;
 
-DROP TABLE sysadm.gfc_part_tables PURGE;
-DROP TABLE sysadm.gfc_part_indexes PURGE;
-DROP TABLE sysadm.gfc_part_ranges PURGE;
-DROP TABLE sysadm.gfc_temp_tables PURGE;
-DROP TABLE sysadm.gfc_part_lists PURGE;
-DROP TABLE sysadm.gfc_part_subparts PURGE;
-DROP TABLE sysadm.gfc_part_range_lists PURGE;  
-DROP VIEW  sysadm.gfc_part_range_lists;
+DROP TABLE &&ownerid..gfc_part_tables PURGE;
+DROP TABLE &&ownerid..gfc_part_indexes PURGE;
+DROP TABLE &&ownerid..gfc_part_ranges PURGE;
+DROP TABLE &&ownerid..gfc_temp_tables PURGE;
+DROP TABLE &&ownerid..gfc_part_lists PURGE;
+DROP TABLE &&ownerid..gfc_part_subparts PURGE;
+DROP TABLE &&ownerid..gfc_part_range_lists PURGE;  
+DROP VIEW  &&ownerid..gfc_part_range_lists;
 
 --gfc_ps_tables holds the records for which DDL scripts are to be regeneated by this script
 CREATE
 --GLOBAL TEMPORARY
-TABLE sysadm.gfc_ps_tables
+TABLE &&ownerid..gfc_ps_tables
 (recname            VARCHAR2(15)    NOT NULL
 ,table_name         VARCHAR2(18)    NOT NULL
 ,table_type         VARCHAR2(1)
@@ -50,7 +54,7 @@ TABLE sysadm.gfc_ps_tables
 --gfc_ps_tab_columns holds a list of columns for tables to be recreated.   Any sub-records will be expanded recursively
 CREATE
 --GLOBAL TEMPORARY
-TABLE sysadm.gfc_ps_tab_columns
+TABLE &&ownerid..gfc_ps_tab_columns
 (recname         VARCHAR2(15)    NOT NULL
 ,fieldname       VARCHAR2(18)    NOT NULL
 ,useedit         number          NOT NULL
@@ -62,7 +66,7 @@ TABLE sysadm.gfc_ps_tab_columns
 --gfc_ora_tab_columns
 CREATE
 --GLOBAL TEMPORARY
-TABLE sysadm.gfc_ora_tab_columns
+TABLE &&ownerid..gfc_ora_tab_columns
 (table_name	     VARCHAR2(30)	 NOT NULL
 ,column_name     VARCHAR2(30)	 NOT NULL
 ,column_id	     NUMBER 		 NOT NULL
@@ -73,7 +77,7 @@ TABLE sysadm.gfc_ora_tab_columns
 --gfc_ps_indexdefn - expanded version of psindexdefn
 CREATE
 --GLOBAL TEMPORARY
-TABLE sysadm.gfc_ps_indexdefn
+TABLE &&ownerid..gfc_ps_indexdefn
 (recname         VARCHAR2(15)    NOT NULL
 ,indexid         VARCHAR2(1)     NOT NULL
 ,subrecname      VARCHAR2(15)    NOT NULL
@@ -89,7 +93,7 @@ TABLE sysadm.gfc_ps_indexdefn
 --gfc_ps_keydefn - expanded version of pskeydefn
 CREATE
 --GLOBAL TEMPORARY
-TABLE sysadm.gfc_ps_keydefn
+TABLE &&ownerid..gfc_ps_keydefn
 (recname         VARCHAR2(15)    NOT NULL
 ,indexid         VARCHAR2(1)     NOT NULL
 ,keyposn         NUMBER          NOT NULL
@@ -102,7 +106,7 @@ TABLE sysadm.gfc_ps_keydefn
 --to hold override parameters for function based indexes specified in partdata - 19.10.2007
 CREATE
 --GLOBAL TEMPORARY
-TABLE sysadm.gfc_ps_idxddlparm
+TABLE &&ownerid..gfc_ps_idxddlparm
 (recname         VARCHAR2(15)    NOT NULL
 ,indexid	     VARCHAR2(18)    NOT NULL
 ,parmname	     VARCHAR2(8)     NOT NULL
@@ -112,7 +116,7 @@ TABLE sysadm.gfc_ps_idxddlparm
 
 CREATE 
 --GLOBAL TEMPORARY
-TABLE sysadm.gfc_part_ranges
+TABLE &&ownerid..gfc_part_ranges
 (part_id         VARCHAR2(8)     NOT NULL --ID of partitioning schema
 ,part_no         NUMBER          NOT NULL --sequence number of range
 ,part_name       VARCHAR2(30)    NOT NULL --this goes into the partition names
@@ -123,7 +127,7 @@ TABLE sysadm.gfc_part_ranges
 ,idx_storage     VARCHAR2(100)
 ,arch_flag       VARCHAR2(1)     DEFAULT 'N' NOT NULL --N=not archived, A=archive D=delete/drop
  CONSTRAINT gfc_part_ranges_arch CHECK (arch_flag IN('A','D','N'))
-,partial_index   VARCHAR2(1)     DEFAULT 'N' --26.11.2020 add partial index control at partition level
+,partial_index   VARCHAR2(1)     --26.11.2020 add partial index control at partition level
  CONSTRAINT gfc_part_ranges_partial CHECK (partial_index IN('Y','N')) --Y=on, N=off
 ,CONSTRAINT gfc_part_ranges PRIMARY KEY (part_id, part_no)
 ,CONSTRAINT gfc_part_ranges2 UNIQUE(part_id, part_name)
@@ -131,15 +135,16 @@ TABLE sysadm.gfc_part_ranges
 
 CREATE 
 --GLOBAL TEMPORARY
-TABLE sysadm.gfc_part_tables
+TABLE &&ownerid..gfc_part_tables
 (recname          VARCHAR2(30)   NOT NULL --peoplesoft record name
 ,organization     VARCHAR2(1)    DEFAULT 'T' 
  CONSTRAINT organization_check CHECK(organization IN('T','I')) --(T)able, (I)OT
 ,part_id          VARCHAR2(8) 	 NOT NULL --ID of partitioning strategy.  Many tables can share one 
 ,part_column      VARCHAR2(100)  NOT NULL --range partitioning column, or comma separated columns
-,part_type        VARCHAR2(1)    NOT NULL --(R)ange, (L)ist, (H)ash or (N)ot 
+,part_type        VARCHAR2(1)    NOT NULL --(R)ange, (L)ist, (H)ash, (I)nterval or (N)ot 
  CONSTRAINT tables_part_type CHECK (part_type IN('R','L','H','I','N'))
 ,interval_expr    VARCHAR2(100)  --Interval partitioning expression -- added 2.3.2015
+,subpart_id       VARCHAR2(8)    --added 10.5.2021
 ,subpart_type     VARCHAR2(1)    DEFAULT 'N' --(L)ist or (H)ash only 
  CONSTRAINT tables_subpart_type CHECK (subpart_type IN('R','L','H','N')) --20.10.2014 added range subpartitioning
 ,subpart_column   VARCHAR2(100) 		 --sub partitioning column
@@ -156,7 +161,7 @@ TABLE sysadm.gfc_part_tables
 ,override_schema  VARCHAR2(30)
 ,src_table_name   VARCHAR2(30)   --8.6.2010 use this table as source for data during build - if null use same record
 ,criteria         VARCHAR2(1000) --crieria to be applied to partitioned table to filter rows during rebuild
-,arch_flag        VARCHAR2(1)    DEFAULT 'N' NOT NULL --N=not archived, A=archive D=delete/drop
+,arch_flag        VARCHAR2(1)   DEFAULT 'N' NOT NULL --N=not archived, A=archive D=delete/drop
  CONSTRAINT gfc_part_tables_arch CHECK (arch_flag IN('A','D','N'))
 ,arch_schema      VARCHAR2(30)	 --schema of archive table (else db owner schema or override schema)
 ,arch_table_name  VARCHAR2(30)   --name of archive table (else taken from record definition)
@@ -164,24 +169,35 @@ TABLE sysadm.gfc_part_tables
 ,noarch_condition VARCHAR2(1000) --logical condition to specify rows of data that are not to be archived.
 ,CONSTRAINT gfc_part_tables PRIMARY KEY(recname)
 ,CONSTRAINT gfc_part_tables_columns CHECK(part_column IS NOT NULL OR subpart_column IS NOT NULL)
-,CONSTRAINT gfc_part_tables_types CHECK(part_type != subpart_type OR subpart_type = 'N')
+,CONSTRAINT gfc_part_tables_types CHECK(part_type != subpart_type OR subpart_type = 'N' OR (part_type = 'R' AND subpart_type = 'R')) --13.5.2021 add support for different range-range composite partitioning
 );
 
+--13.5.2021 --backward compatibility trigger to set subpart_id=part_id
+CREATE OR REPLACE TRIGGER sysadm.gfc_part_tables_subpart_id 
+BEFORE INSERT OR UPDATE 
+ON &&ownerid..gfc_part_tables FOR EACH ROW
+BEGIN
+  IF :new.subpart_id IS NULL THEN
+    :new.subpart_id := :new.part_id;
+  END IF;
+END;
+/
 
 CREATE
 --GLOBAL TEMPORARY
-TABLE sysadm.gfc_part_indexes
+TABLE &&ownerid..gfc_part_indexes
 (recname         VARCHAR2(30) 	NOT NULL --peoplesoft record name
-,indexid	     VARCHAR2(1)	NOT NULL --peoplesoft index id
+,indexid         VARCHAR2(1)	NOT NULL --peoplesoft index id
 ,part_id         VARCHAR2(8) 	NOT NULL --ID of partitioning strategy.  Many tables can share one 
 ,part_column     VARCHAR2(100) 	NOT NULL --range partitioning column, or comma separated columns
 ,part_type       VARCHAR2(1)    NOT NULL --(R)ange or (L)ist, (H)ash or (N)ot Partitioned
- CONSTRAINT gfc_part_indexes_part_type CHECK (part_type IN('R','L','H','N'))
-,subpart_type    VARCHAR2(1)    DEFAULT 'N' --(L)ist or (H)ash only 
- CONSTRAINT gfc_part_indexes_subpart_type CHECK (subpart_type IN('R','L','H','N'))
+ CONSTRAINT index_part_type CHECK (part_type IN('R','L','H','N'))
+,subpart_id      VARCHAR2(8) 	NOT NULL --ID of partitioning strategy.  Many tables can share one 
+,subpart_type    VARCHAR2(1) DEFAULT 'N' --(L)ist or (H)ash only 
+ CONSTRAINT index_subpart_type CHECK (subpart_type IN('R','L','H','N'))
 ,subpart_column  VARCHAR2(100) 		 --sub partitioning column
 ,hash_partitions NUMBER --number of hash partitions
- CONSTRAINT gfc_part_indexes_hash_partitions_pos CHECK(hash_partitions>=0)
+ CONSTRAINT indexes_hash_partitions_pos CHECK(hash_partitions>=0)
 ,idx_tablespace  VARCHAR2(30)
 ,idx_storage     VARCHAR2(100)  DEFAULT 'PCTFREE **PCTFREE**' NOT NULL 
 ,override_schema VARCHAR2(30)
@@ -191,9 +207,20 @@ TABLE sysadm.gfc_part_indexes
 ,CONSTRAINT gfc_part_indexes_tables PRIMARY KEY(recname, indexid)
 );
 
+--13.5.2021 --backward compatibility trigger to set subpart_id=part_id
+CREATE OR REPLACE TRIGGER &&ownerid..gfc_part_indexes_subpart_id 
+BEFORE INSERT OR UPDATE 
+ON &&ownerid..gfc_part_indexes FOR EACH ROW
+BEGIN
+  IF :new.subpart_id IS NULL THEN
+    :new.subpart_id := :new.part_id;
+  END IF;
+END;
+/
+
 CREATE 
 --GLOBAL TEMPORARY
-TABLE sysadm.gfc_part_lists 
+TABLE &&ownerid..gfc_part_lists 
 (part_id         VARCHAR2(8)    NOT NULL --ID of partitioning schema
 ,part_no         NUMBER         NOT NULL --sequence number of range
 ,part_name       VARCHAR2(30)   NOT NULL --this goes into the partition names
@@ -213,17 +240,29 @@ TABLE sysadm.gfc_part_lists
 --20.10.2014 replaces gfc_part_range_lists
 CREATE 
 --GLOBAL TEMPORARY
-TABLE sysadm.gfc_part_subparts
+TABLE &&ownerid..gfc_part_subparts
 (part_id         VARCHAR2(8)    NOT NULL --ID of partitioning schema
 ,part_name       VARCHAR2(30)   NOT NULL --this goes into the partition names
+,subpart_id      VARCHAR2(8)    NOT NULL --ID of subpartitioning schema --added 13.5.2021
 ,subpart_name    VARCHAR2(30)   NOT NULL --this goes into the subpartition names
 ,build           VARCHAR2(1)    DEFAULT 'Y' NOT NULL 
  CONSTRAINT gfc_part_range_lists_build CHECK (build IN('Y','N'))
 ,CONSTRAINT gfc_part_range_Lists PRIMARY KEY(part_id, part_name, subpart_name)
 );
 
+--13.5.2021 --backward compatibility trigger to set subpart_id
+CREATE OR REPLACE TRIGGER &&ownerid..gfc_part_subparts_subpart_id 
+BEFORE INSERT OR UPDATE 
+ON &&ownerid..gfc_part_subparts FOR EACH ROW
+BEGIN
+  IF :new.subpart_id IS NULL THEN
+    :new.subpart_id := :new.part_id;
+  END IF;
+END;
+/
+
 --20.10.2014 create for backward compatibility
-CREATE OR REPLACE VIEW sysadm.gfc_part_range_lists AS
+CREATE OR REPLACE VIEW &&ownerid..gfc_part_range_lists AS
 SELECT part_id
 ,      part_name range_name
 ,      subpart_name list_name
@@ -232,7 +271,7 @@ FROM   gfc_part_subparts;
 
 CREATE 
 --GLOBAL TEMPORARY
-TABLE sysadm.gfc_temp_tables
+TABLE &&ownerid..gfc_temp_tables
 (recname         VARCHAR2(30) 	NOT NULL --peoplesoft record name
 ,CONSTRAINT gfc_temp_tables PRIMARY KEY(recname)
 );
@@ -240,7 +279,7 @@ TABLE sysadm.gfc_temp_tables
 --gfc_ddl_script is a table used to store the lines of the script that is generated
 CREATE
 --GLOBAL TEMPORARY
-TABLE sysadm.gfc_ddl_script
+TABLE &&ownerid..gfc_ddl_script
 (type           NUMBER          NOT NULL 
 ,lineno         NUMBER          NOT NULL     
 ,line           VARCHAR2(4000)

@@ -1,9 +1,9 @@
 rem gfcbuildspool.sql
-rem (c) Go-Faster Consultancy Ltd.
+rem (c) Go-Faster Consultancy
 rem 17.9.2008 - moved spool commands from gfcbuild.sql to this script 
 
 column line format a254
-set timi off head off feedback off echo off verify off pages 0 lines 1024 trimspool on
+set timi off head off feedback off echo off verify off pages 0 lines 1024 trimspool on sqlblanklines on
 set termout off
 
 column SPOOL_FILENAME   new_value SPOOL_FILENAME
