@@ -1,9 +1,11 @@
 rem gfcbuildpkgbody.sql
-rem (c) Go-Faster Consultancy Ltd. www.go-faster.co.uk
+rem (c) Go-Faster Consultancy - www.go-faster.co.uk
 rem ***Version History moved to procedure history
 
 set echo on termout on
 spool gfcbuildpkgbody
+
+@@ownerid
 -------------------------------------------------------------------------------------------------------
 -- source Code
 -------------------------------------------------------------------------------------------------------
@@ -13,7 +15,7 @@ spool gfcbuildpkgbody
 -- 7:print end of procedure reset action
 -- 9:debug for INS_LINE
 -------------------------------------------------------------------------------------------------------
-CREATE OR REPLACE PACKAGE BODY sysadm.gfc_pspart AS
+CREATE OR REPLACE PACKAGE BODY &&ownerid..gfc_pspart AS
 -------------------------------------------------------------------------------------------------------
 -- spool Files
 k_build  CONSTANT INTEGER := 0; -- build peoplesoft tables
@@ -22,6 +24,9 @@ k_stats  CONSTANT INTEGER := 2; -- generate CBO stats
 k_alter  CONSTANT INTEGER := 3; -- alter main tables, add/split partitions, insert from source table
 k_arch1  CONSTANT INTEGER := 4; -- archive build script
 k_arch2  CONSTANT INTEGER := 5; -- archive privileges
+-------------------------------------------------------------------------------------------------------
+k_max_line_length CONSTANT INTEGER := 160; --max lines length
+k_max_line_length_margin CONSTANT INTEGER := 128; --max lines length
 -------------------------------------------------------------------------------------------------------
 k_module      CONSTANT VARCHAR2(64) := $$PLSQL_UNIT;
 k_sys_context CONSTANT VARCHAR2(10 CHAR) := 'GFC_PSPART'; -- name of system context
@@ -45,6 +50,7 @@ l_chardef VARCHAR2(1 CHAR);             -- permit VARCHAR2 character definition
 l_logging VARCHAR2(1 CHAR);             -- set to Y to generate build script that logs
 l_parallel_index VARCHAR2(1 CHAR);      -- set to true to enable parallel index build
 l_parallel_table VARCHAR2(1 CHAR);      -- set to true to enable parallel index build
+l_force_ddl_dop VARCHAR2(2 CHAR);       -- forced degree of parallelism
 l_roles VARCHAR2(1 CHAR);               -- should roles be granted
 l_scriptid VARCHAR2(8 CHAR);            -- id string in script and project names
 l_update_all VARCHAR2(30 CHAR);         -- name of role than can update PS tables
@@ -212,6 +218,8 @@ BEGIN
   sys.dbms_output.put_line('17.09.2019 - Added sys_context( to read current_schema if not running as SYSADM');
   sys.dbms_output.put_line('10.08.2020 - From 19c, v$version only has a single version row');
   sys.dbms_output.put_line('26.11.2020 - Support for partial indexing');
+  sys.dbms_output.put_line('13.05.2021 - Permit same sub-partitioning type with different PART_ID');
+  sys.dbms_output.put_line('08.07.2021 - Add Session parallel force DDL for parallel index creation with automatic parallelism');
   dbms_application_info.set_module(module_name=>l_module, action_name=>l_action);
 END history;
 
@@ -229,6 +237,7 @@ BEGIN
   l_logging := 'N';                -- set to Y to generate build script that logs
   l_parallel_table := 'Y';         -- set to true to enable parallelism on table copy
   l_parallel_index := 'Y';         -- set to true to enable parallel index build
+  l_force_ddl_dop := '';           -- value to append to parallel keyword
   l_roles := 'N';                  -- should roles be granted
   l_scriptid := 'GFCBUILD';        -- id string in script and project names
   l_update_all := '';              -- 11.12.2013 no default update all role any more
@@ -236,7 +245,7 @@ BEGIN
   l_drop_index := 'Y';             -- if true drops index on exiting table, else alters name of index to old
   l_pause := 'N';                  -- if true add pause commands to build script
   l_explicit_schema := 'Y';        -- all objects schema explicitly named
-  l_block_sample := 'Y';           -- use block sampling for statistics
+  l_block_sample := 'N';           -- use block sampling for statistics --changed to N 13.5.2021
   l_build_stats := 'N';            -- if true analyzes tables as it builds them
   l_deletetempstats := 'Y';        -- if true delete and in ORacle 10 also lock stats on temp tables
   l_longtoclob := 'N';             -- if Y then partition and convert longs to clobs if override schema
@@ -271,6 +280,7 @@ BEGIN
   l_logging          := NVL(SYS_CONTEXT(k_sys_context,'logging'        ),l_logging);
   l_parallel_table   := NVL(SYS_CONTEXT(k_sys_context,'parallel_table' ),l_parallel_table);
   l_parallel_index   := NVL(SYS_CONTEXT(k_sys_context,'parallel_index' ),l_parallel_index);
+  l_force_ddl_dop    := NVL(SYS_CONTEXT(k_sys_context,'force_ddl_dop'  ),l_force_ddl_dop);
   l_roles            := NVL(SYS_CONTEXT(k_sys_context,'roles'          ),l_roles);
   l_scriptid         := NVL(SYS_CONTEXT(k_sys_context,'scriptid'       ),l_scriptid);
   l_update_all       := NVL(SYS_CONTEXT(k_sys_context,'update_all'     ),l_update_all);
@@ -312,6 +322,7 @@ BEGIN
   dbms_session.set_context(k_sys_context,'logging'          ,l_logging);
   dbms_session.set_context(k_sys_context,'parallel_table'   ,l_parallel_table);
   dbms_session.set_context(k_sys_context,'parallel_index'   ,l_parallel_index);
+  dbms_session.set_context(k_sys_context,'force_ddl_dop'    ,l_force_ddl_dop);
   dbms_session.set_context(k_sys_context,'roles'            ,l_roles);
   dbms_session.set_context(k_sys_context,'scriptid'         ,l_scriptid);
   dbms_session.set_context(k_sys_context,'update_all'       ,l_update_all);
@@ -1202,14 +1213,14 @@ PROCEDURE ins_line(p_type NUMBER, p_line VARCHAR2) IS
 		dbms_application_info.read_module(module_name=>l_module, action_name=>l_action);
 		set_action(p_action_name=>'INS_LINE',p_debug_level=>9);
 
-		-- if string longer than threshold (100 chars) calculate position of last not in quote space, and cut string there.  
- 		--Keep cutting until string less than 100 chars and position > 0
+		-- if string longer than threshold (k_max_line_length chars) calculate position of last not in quote space, and cut string there.  
+ 		--Keep cutting until string less than k_max_line_length chars and position > 0
 		l_pos := 0;
 		l_last_break := 0;
 		l_line := RTRIM(p_line);
 		l_length := LENGTH(l_line);
                 debug_msg('type='||p_type||',l_length='||l_length,9);
-		WHILE l_length >= 100 LOOP
+		WHILE l_length >= k_max_line_length LOOP
 			l_pos := l_pos + 1;
 			l_last_char := l_char;
 			l_char := SUBSTR(l_line,l_pos,1);
@@ -1227,7 +1238,7 @@ PROCEDURE ins_line(p_type NUMBER, p_line VARCHAR2) IS
                         debug_msg(l_char||'@'||l_pos||':l_last_break='||l_last_break||':l_inquote='||show_bool(l_inquote),9);
 			IF l_pos >= l_length THEN
 				EXIT;
-			ELSIF l_pos >= 100 AND l_last_break > 0 THEN
+			ELSIF l_pos >= k_max_line_length AND l_last_break > 0 THEN
 		                l_lineno := l_lineno + 1;
 		                EXECUTE IMMEDIATE 'INSERT INTO gfc_ddl_script (type, lineno, line) VALUES(:p_type, :l_lineno, :l_line)'
 				USING p_type, l_lineno, SUBSTR(l_line,1,l_last_break);
@@ -1317,14 +1328,14 @@ PROCEDURE signature(p_type    NUMBER
             dbms_application_info.read_module(module_name=>l_module, action_name=>l_action);
             set_action(p_action_name=>'SIGNATURE');
 
-            ins_line(p_type,'set echo on pause off verify on feedback on timi on autotrace off pause off lines 100');
+            ins_line(p_type,'set echo on pause off verify on feedback on timi on autotrace off pause off lines '||k_max_line_length||' sqlblanklines on');
             IF p_recname IS NULL THEN
                 ins_line(p_type,LOWER('spool '||p_spool||'_'||l_dbname||'.lst'));
             ELSE
                 ins_line(p_type,LOWER('spool '||p_spool||'_'||l_dbname||'_'||p_recname||'.lst'));
             END IF;
 
-            ins_line(p_type,'REM Generated by GFC_PSPART - (c)Go-Faster Consultancy Ltd. www.go-faster.co.uk 2001-2017');
+            ins_line(p_type,'REM Generated by GFC_PSPART - (c)Go-Faster Consultancy - www.go-faster.co.uk 2001-2021');
             ins_line(p_type,'REM '||l_dbname||' @ '||TO_CHAR(sysdate,'HH24:MI:SS DD.MM.YYYY'));
             whenever_sqlerror(p_type,FALSE);
             ins_line(p_type,'EXECUTE dbms_application_info.set_module(module_name=>'''||UPPER(p_spool)||''',action_name=>'''||UPPER(p_recname)||''');');
@@ -1336,6 +1347,23 @@ PROCEDURE signature(p_type    NUMBER
             unset_action(p_action_name=>l_action);
         END signature;
 
+-------------------------------------------------------------------------------------------------------
+-- print ALTER SESSION PARALLEL DDL into script
+-------------------------------------------------------------------------------------------------------
+PROCEDURE forceddldop(p_type NUMBER) IS
+		l_module v$session.module%type;
+		l_action v$session.action%type;
+	BEGIN
+		dbms_application_info.read_module(module_name=>l_module, action_name=>l_action);
+    set_action(p_action_name=>'FORCEDDLDOP');
+
+    IF l_force_ddl_dop IS NOT NULL THEN
+      ins_line(p_type,'ALTER SESSION FORCE PARALLEL DDL PARALLEL '||l_force_ddl_dop||';');
+    END IF;
+    ins_line(p_type,'');
+
+  unset_action(p_action_name=>l_action);
+END forceddldop;
 -------------------------------------------------------------------------------------------------------
 -- print generation date into build script
 -------------------------------------------------------------------------------------------------------
@@ -1895,7 +1923,7 @@ PROCEDURE tab_rangesubparts(p_type NUMBER, p_recname VARCHAR2
                 ins_line(p_type,l_part_def);
 
 		l_part_def := ' VALUES LESS THAN ('||t.part_value||')';
-				IF LENGTH(l_part_def) > 70 THEN --26.11.2020 added partial index support
+		IF LENGTH(l_part_def) > k_max_line_length_margin THEN --26.11.2020 added partial index support
 					ins_line(p_type,l_part_def);
 					l_part_def := '';
 				END IF;
@@ -1968,13 +1996,12 @@ PROCEDURE tab_listsubparts(p_type NUMBER, p_recname VARCHAR2
                 ELSE
                     l_part_def := ',';
                 END IF;
-                l_part_def := l_part_def||'SUBPARTITION '||LOWER(p_part_basename
-                                        ||'_'||p_part_name||'_'||t.part_name);
+                l_part_def := l_part_def||'SUBPARTITION '||LOWER(p_part_basename||'_'||p_part_name||'_'||t.part_name);
                 ins_line(p_type,l_part_def);
 
                 l_part_def := ' VALUES ('||t.list_value||')';
-				IF LENGTH(l_part_def) > 70 THEN --26.11.2020 added partial index support
-					ins_line(p_type,l_part_def);
+		IF LENGTH(l_part_def) > k_max_line_length_margin THEN --26.11.2020 added partial index support
+			ins_line(p_type,l_part_def);
 					l_part_def := '';
 				END IF;
 				IF t.partial_index = 'Y' THEN
@@ -1982,18 +2009,19 @@ PROCEDURE tab_listsubparts(p_type NUMBER, p_recname VARCHAR2
 				ELSIF t.partial_index = 'N' THEN
 					l_part_def := l_part_def||' INDEXING OFF';
 				END IF;
-                ins_line(p_type,l_part_def);
-                l_part_def := '';
+
+                IF l_part_def IS NOT NULL THEN
+                        ins_line(p_type,l_part_def);
+                        l_part_def := '';    
+                END IF;
 
                 IF t.tab_tablespace IS NOT NULL THEN
                     l_part_def := ' TABLESPACE '||t.tab_tablespace;
                 END IF;
-
 -- 3.7.2012 remove physical storage parameters from subpartition definition including Oracle 11.2
 --              IF t.tab_storage IS NOT NULL AND l_oraver >= 11.2 THEN
 --                  l_part_def := l_part_def||' '||tab_storage(p_recname, t.tab_storage); -- 6.9.2007
 --              END IF;
-
                 IF l_part_def IS NOT NULL THEN
                     debug(l_part_def);
                     ins_line(p_type,l_part_def);
@@ -2171,7 +2199,7 @@ PROCEDURE tab_part_ranges(p_type NUMBER, p_recname VARCHAR2, p_part_id VARCHAR2,
                         l_part_def := l_part_def||'PARTITION '||LOWER(NVL(p_part_name,p_recname)
 			                                              ||'_'||p_tab_part_ranges.part_name);
 			l_part_def := l_part_def||' VALUES LESS THAN ('||p_tab_part_ranges.part_value||')';
-			IF LENGTH(l_part_def) > 70 THEN
+			IF LENGTH(l_part_def) > k_max_line_length_margin THEN
 	                        ins_line(p_type,l_part_def);
 				l_part_def := '';
 			END IF;
@@ -2273,7 +2301,7 @@ PROCEDURE tab_part_lists(p_type NUMBER, p_recname VARCHAR2, p_part_id VARCHAR2,
                         l_part_def := l_part_def||'PARTITION '||LOWER(p_recname||'_'||p_tab_part_lists.part_name);
                         ins_line(p_type,l_part_def);
 			l_part_def := ' VALUES ('||p_tab_part_lists.list_value||')';
-						IF LENGTH(l_part_def) > 70 THEN --26.11.2020 added partial index support
+                        IF LENGTH(l_part_def) > k_max_line_length_margin THEN --26.11.2020 added partial index support
 							ins_line(p_type,l_part_def);
 							l_part_def := '';
 						END IF;
@@ -2694,10 +2722,11 @@ PROCEDURE mk_part_indexes(p_recname    VARCHAR2
 
 		debug_msg('mk_part_indexes:'||p_recname||'/'||p_schema||'.'||p_table_name||'/arch_flag='||p_arch_flag,6);
 
-                -- ins_line(k_index,'set echo on pause off verify on feedback on timi on autotrace off pause off lines 100');
-                -- ins_line(k_index,LOWER('spool gfcindex_'||l_dbname||'_'||p_recname||'.lst'));
-                signature(k_index,FALSE,'gfcindex',p_recname);
-                whenever_sqlerror(k_index,TRUE);
+    -- ins_line(k_index,'set echo on pause off verify on feedback on timi on autotrace off pause off lines 100');
+    -- ins_line(k_index,LOWER('spool gfcindex_'||l_dbname||'_'||p_recname||'.lst'));
+    signature(k_index,FALSE,'gfcindex',p_recname);
+    whenever_sqlerror(k_index,TRUE);
+    forceddldop(k_index);
 		ddlpermit(k_index,TRUE); -- added 10.10.2007
 -- 25.5.2011 do not build unique index on IOT
                 FOR p_indexes IN(
@@ -2836,7 +2865,11 @@ PROCEDURE mk_part_indexes(p_recname    VARCHAR2
 
                                 -- 9.10.2003 - create index parallel
        	                        IF l_parallel_index = 'Y' THEN
-               	                        ins_line(l_type,'PARALLEL');
+                    IF l_force_ddl_dop IS NULL THEN
+                        ins_line(l_type,'PARALLEL');
+                    ELSE
+                        ins_line(l_type,'PARALLEL '||l_force_ddl_dop);
+                    END IF;
 				ELSE
 					ins_line(l_type,'NOPARALLEL');
                                 END IF;
@@ -3043,7 +3076,11 @@ PROCEDURE mk_arch_indexes(p_type       NUMBER
 
 	                        -- 9.10.2003 - create index parallel
        		                IF l_parallel_index = 'Y' THEN
-                	                ins_line(p_type,'PARALLEL');
+                    IF l_force_ddl_dop IS NULL THEN
+                        ins_line(p_type,'PARALLEL');
+                    ELSE
+                        ins_line(p_type,'PARALLEL '||l_force_ddl_dop);
+                    END IF;
 				ELSE
 					ins_line(p_type,'NOPARALLEL');
 	                        END IF;
@@ -4552,18 +4589,19 @@ BEGIN
       l_arch_flag := ''; -- build all partitions
     END IF;
 
-    -- ins_line(k_build,'set echo on pause off verify on feedback on timi on autotrace off pause off lines 100');
-    -- ins_line(k_build,LOWER('spool '||LOWER(l_scriptid)||'_'||l_dbname||'_'||p_tables.recname||'.lst'));
     signature(k_build,FALSE,l_scriptid,p_tables.recname);
     ins_line(k_build,'rem Partitioning Scheme '||p_tables.part_id);
     whenever_sqlerror(k_build,TRUE);
+    forceddldop(k_build);
     ddlpermit(k_build,TRUE); -- added 10.10.2007
 
     -- ins_line(k_alter,'set echo on pause off verify on feedback on timi on autotrace off pause off lines 100');
     -- ins_line(k_alter,LOWER('spool gfcalter_'||l_dbname||'_'||p_tables.recname||'.lst'));
     signature(k_alter,TRUE,'gfcalter',p_tables.recname);
      ins_line(k_alter,'rem Partitioning Scheme '||p_tables.part_id);
-
+    whenever_sqlerror(k_alter,TRUE);
+    forceddldop(k_alter);
+    
     IF p_tables.src_table_name IS NULL THEN -- added 8.6.2010
       whenever_sqlerror(k_build,FALSE);
       ins_line(k_build,'DROP TABLE '||LOWER(l_schema||'old_'||p_tables.recname)||l_drop_purge_suffix);
@@ -4653,7 +4691,11 @@ BEGIN
     ins_line(k_build,'ENABLE ROW MOVEMENT');
 -- 9.10.2003 - create table with parallelism enabled
     IF l_parallel_index = 'Y' THEN
-      ins_line(k_build,'PARALLEL');
+      IF l_force_ddl_dop IS NULL THEN
+        ins_line(k_build,'PARALLEL');
+      ELSE
+        ins_line(k_build,'PARALLEL '||l_force_ddl_dop);
+      END IF;
     ELSE
       ins_line(k_build,'NOPARALLEL');
     END IF;
@@ -4813,8 +4855,6 @@ BEGIN
     pause_sql(k_build);
 --   ins_line(k_build,'ANALYZE TABLE '||LOWER(l_schema||p_tables.table_name)
 --                                    ||' ESTIMATE STATISTICS SAMPLE 1 PERCENT;');
---          ins_line(k_stats,'set echo on pause off verify on feedback on timi on autotrace off pause off lines 100');
---          ins_line(k_stats,LOWER('spool gfcstats_'||l_dbname||'_'||p_tables.recname||'.lst'));
     signature(k_stats,FALSE,'gfcstats',p_tables.recname);
     IF l_build_stats = 'Y' THEN
       l_counter := 0; -- do build stats command in table build script
@@ -5045,12 +5085,10 @@ BEGIN
 	    -- 11.2.2013 if table is only deleted but has a noarch condition then we need an exchange table
     IF p_tables.arch_flag = 'A' OR (p_tables.arch_flag = 'D' AND p_tables.noarch_condition IS NOT NULL) THEN
 
---    ins_line(k_arch1,'set echo on pause off verify on feedback on timi on autotrace off pause off lines 100');
---    ins_line(k_arch1,LOWER('spool gfcarch1_'||l_dbname||'_'||p_tables.recname||'.lst'));
       signature(k_arch1,FALSE,'gfcarch1',p_tables.recname);
       ins_line(k_arch1,'rem Partitioning Scheme '||p_tables.part_id);
       whenever_sqlerror(k_arch1,FALSE);
-
+      forceddldop(k_arch1);
       -- create the exchange table
       ins_line(k_arch1,'CREATE TABLE '||LOWER(l_arch_schema||'.XCHG_'||p_tables.recname));
       tab_cols(k_arch1,p_tables.recname,l_longtoclob,p_tables.organization,'arch_');
@@ -5188,6 +5226,7 @@ BEGIN
 
       signature(k_arch2,FALSE,'gfcarch2',p_tables.recname);
       ins_line(k_arch2,'rem Partitioning Scheme '||p_tables.part_id);
+      forceddldop(k_arch2);
 
       -- grant select, alter on base table to archive schema
       ins_line(k_arch2,'GRANT SELECT, ALTER ON '||l_schema2||p_tables.base_sqltablename||' TO '||LOWER(l_arch_schema));
@@ -5241,13 +5280,13 @@ BEGIN
 --  ins_line(k_build,'set echo on pause off verify on feedback on timi on autotrace off pause off lines 100');
 --  ins_line(k_build,LOWER('spool '||LOWER(l_scriptid)||'_'||l_dbname||'_'||p_tables.recname||'.lst'));
     signature(k_build,FALSE,l_scriptid,p_tables.recname);
-
+    forceddldop(k_build);
     ddlpermit(k_build,TRUE); -- added 29.10.2007
 
 --  ins_line(k_index,'set echo on pause off verify on feedback on timi on autotrace off pause off lines 100');
 --  ins_line(k_index,LOWER('spool gfcindex_'||l_dbname||'_'||p_tables.recname||'.lst'));
     signature(k_index,FALSE,'gfcindex',p_tables.recname);
-
+    forceddldop(k_index);
     FOR l_tempinstance IN 0..p_tables.temptblinstances LOOP
 
       	                        IF l_tempinstance > 0 THEN
@@ -5277,7 +5316,7 @@ BEGIN
 
 		                        WHILE l_counter <= 2 LOOP
 						IF l_counter = 2 AND l_tempinstance = 0 THEN
---				                        ins_line(k_stats,'set echo on pause off verify on feedback on timi on autotrace off pause off lines 100');
+--				                        ins_line(k_stats,'set echo on pause off verify on feedback on timi on autotrace off pause off lines '||k_max_line_length);
 --				      	                ins_line(k_stats,LOWER('spool gfcstats_'||l_dbname||'_'||p_tables.recname||'.lst'));
 				               	        signature(k_stats,FALSE,'gfcstats',p_tables.recname);
 						END IF;
@@ -5924,7 +5963,7 @@ BEGIN
   sys.dbms_output.enable(NULL);
 
   sys.dbms_output.put_line('GFC_PSPART - Partitioned/Global Temporary Table DDL generator for PeopleSoft');
-  sys.dbms_output.put_line('(c)Go-Faster Consultancy Ltd. www.go-faster.co.uk 2001-2017');
+  sys.dbms_output.put_line('(c)Go-Faster Consultancy - www.go-faster.co.uk 2001-2021');
 
   dbms_application_info.set_module(module_name=>l_module, action_name=>l_action);
 END;
@@ -5947,6 +5986,7 @@ BEGIN
   sys.dbms_output.put_line('Rebuild tables with redo logging       : '||l_logging);
   sys.dbms_output.put_line('Enable parallelism for table copy      : '||l_parallel_table);
   sys.dbms_output.put_line('Enable parallel index build            : '||l_parallel_index);
+  sys.dbms_output.put_line('Force Parallel DDL Degree              : '||l_force_ddl_dop);
   sys.dbms_output.put_line('Grant privileges to roles              : '||l_roles);
   sys.dbms_output.put_line('Name of update all role                : '||l_update_all);
   sys.dbms_output.put_line('Name of select all role                : '||l_read_all);
@@ -5998,6 +6038,7 @@ PROCEDURE set_defaults
 ,p_logging         VARCHAR2 DEFAULT ''
 ,p_parallel_table  VARCHAR2 DEFAULT ''
 ,p_parallel_index  VARCHAR2 DEFAULT ''
+,p_force_ddl_dop   VARCHAR2 DEFAULT ''
 ,p_roles           VARCHAR2 DEFAULT ''
 ,p_scriptid        VARCHAR2 DEFAULT ''
 ,p_update_all      VARCHAR2 DEFAULT ''
@@ -6045,6 +6086,10 @@ PROCEDURE set_defaults
 			l_parallel_index := p_parallel_index;
 		END IF;
 
+		IF p_force_ddl_dop IS NOT NULL THEN
+			l_force_ddl_dop := p_force_ddl_dop;
+		END IF;
+        
 		IF p_roles IS NOT NULL THEN
 			l_roles := p_roles;
 		END IF;

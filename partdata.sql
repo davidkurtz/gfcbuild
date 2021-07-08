@@ -15,26 +15,29 @@ execute gfc_pspart.set_defaults(p_update_all=>'SYSADM_READWRITE');
 execute gfc_pspart.set_defaults(p_roles => 'Y');
 execute gfc_pspart.set_defaults(p_ddlenable  => 'BEGIN psft_ddl_lock.set_ddl_permitted(TRUE); END;'||CHR(10)||'/');
 execute gfc_pspart.set_defaults(p_ddldisable => 'BEGIN psft_ddl_lock.set_ddl_permitted(FALSE); END;'||CHR(10)||'/');
---execute gfc_pspart.set_defaults(p_drop_purge => 'N');
---execute gfc_pspart.set_defaults(p_desc_index => 'N');
+--execute gfc_pspart.set_defaults(p_force_ddl_dop => '40'); 
+execute gfc_pspart.set_defaults(p_drop_purge => 'Y');
+execute gfc_pspart.set_defaults(p_desc_index => 'N');
+execute gfc_pspart.set_defaults(p_drop_index => 'N');
 execute gfc_pspart.set_defaults(p_parallel_table => 'Y');
+execute gfc_pspart.set_defaults(p_block_sample => 'N');
 execute gfc_pspart.display_defaults;
 --------------------------------------------------------------------------------------------------------------
 --------------------------------------------------------------------------------------------------------------
-set lines 110 pages 50
+set lines 180 pages 50 pause off 
 column recname          format a15     heading 'PeopleSoft|Record Name'
 column table_name       format a18     heading 'Table Name'
 column part_id          format a8      heading 'Part ID'
 column part_no          format 9999.90 heading 'Part|No.'
 column part_type        format a4      heading 'Part|Type'
 column part_name        format a15     heading 'Part|Name'
-column part_column      format a20     heading 'Part|Column'
+column part_column      format a30     heading 'Part|Column'
 column subpart_type     format a4      heading 'SubP|Type'
 column subpart_column   format a14     heading 'Sub-Part|Column'
 column hash_partitions  format 999     heading 'Hash|Parts'
 column tab_tablespace   format a20     heading 'Table|TblSpc'
 column idx_tablespace   format a20     heading 'Index|TblSpc'
-column tab_storage      format a20     heading 'Table|Storage Clause'
+column tab_storage      format a35     heading 'Table|Storage Clause'
 column idx_storage      format a20     heading 'Index|Storage Clause'
 column sample_size      format 999     heading 'Sample|Size %'
 column method_opt       format a20     heading 'Optimization|Method'
@@ -52,7 +55,7 @@ column arch_flag        format a4      heading 'Arch|Flag'
 column noarch_condition format a40     heading 'No Archive Condition'
 column name_suffix      format a10     heading 'Name|Suffix'
 column partial_index    format a7      heading 'Partial|Index'
-set lines 110 pages 50 echo off timi off
+set lines 150 pages 50 echo off timi off
 spool partdata
 
 ttitle 'Partitioned Tables'
@@ -91,9 +94,11 @@ FROM	gfc_part_tables
 UNION
 SELECT 	'R', tab_tablespace, idx_tablespace
 FROM	gfc_part_ranges
+where arch_flag != 'D'
 UNION
 SELECT 	'L', tab_tablespace, idx_tablespace
 FROM	gfc_part_lists
+where arch_flag != 'D'
 ORDER BY 1,2,3
 /
 ttitle 'Tablespaces to be created'
@@ -131,14 +136,9 @@ set termout on echo off
 --------------------------------------------------------------------------------------------------------------
 --------------------------------------------------------------------------------------------------------------
 
-/*
-SELECT	t.recname, part_value
-FROM	gfc_part_tables t
-,	gfc_part_ranges r
-where	t.part_id = r.part_id
-*/
+@@psownerid
 
-CREATE OR REPLACE PACKAGE sysadm.gfc_long as
+CREATE OR REPLACE PACKAGE &&ownerid..gfc_long as
 	FUNCTION user_tab_partitions 
 		(p_table_name 	VARCHAR2
 		,p_part_name 	VARCHAR2) 
@@ -146,7 +146,7 @@ CREATE OR REPLACE PACKAGE sysadm.gfc_long as
 END;
 /
 
-CREATE OR REPLACE PACKAGE body sysadm.gfc_long AS
+CREATE OR REPLACE PACKAGE body &&ownerid..gfc_long AS
 FUNCTION user_tab_partitions 
 	(p_table_name 	VARCHAR2
 	,p_part_name 	VARCHAR2) RETURN DATE
@@ -190,72 +190,3 @@ FROM	(
 	)
 /
 
-/*
-SELECT 	'SELECT COUNT(*) FROM '||table_name||' PARTITION('||bt_partition_name||');'
-FROM	gfc_date_parts
-where	table_name = 'PS_BT_ABSSUMM_NEW'
-and	low_value >= TO_DATE('21012006','DDMMYYYY')
-and     high_value <= TO_DATE('27082006','DDMMYYYY')
-;
-
-select low_value, high_value, count(*)
-FROM gfc_date_parts
-GROUP BY low_value, high_value
-ORDER BY 1,2
-/
-
-SELECT table_name, high_value
-FROM gfc_date_parts
-WHERE low_value is null
-ORDER BY high_value, table_name
-/
-
-SELECT tab_tablespace
-from gfc_part_ranges
-union 
-select idx_tablespace
-from gfc_part_ranges
-/
-
-
-SELECT 	tab_tablespace FROM gfc_part_tables UNION
-SELECT 	idx_tablespace FROM gfc_part_tables UNION
-SELECT 	tab_tablespace FROM gfc_part_ranges UNION
-SELECT 	idx_tablespace FROM gfc_part_ranges UNION
-SELECT 	tab_tablespace FROM gfc_part_lists  UNION
-SELECT 	idx_tablespace FROM gfc_part_lists
-MINUS
-SELECT	tablespace_name FROM dba_tablespaces
-ORDER BY 1
-/
-
-
-*/
-UPDATE gfc_part_ranges x
-SET tab_tablespace = ''
-WHERE NOT EXISTS(
-	SELECT 'x'
-	FROM dba_tablespaces s
-	WHERE s.tableSpace_name = x.tab_tablespace)
-/
-UPDATE gfc_part_ranges x
-SET idx_tablespace = ''
-WHERE NOT EXISTS(
-	SELECT 'x'
-	FROM dba_tablespaces s
-	WHERE s.tableSpace_name = x.idx_tablespace)
-/
-UPDATE gfc_part_lists x
-SET tab_tablespace = ''
-WHERE NOT EXISTS(
-	SELECT 'x'
-	FROM dba_tablespaces s
-	WHERE s.tableSpace_name = x.tab_tablespace)
-/
-UPDATE gfc_part_lists x
-SET idx_tablespace = ''
-WHERE NOT EXISTS(
-	SELECT 'x'
-	FROM dba_tablespaces s
-	WHERE s.tableSpace_name = x.idx_tablespace)
-/

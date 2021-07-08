@@ -1,5 +1,6 @@
 --------------------------------------------------------------------------------------
---
+-- rem (c) Go-Faster Consultancy
+--------------------------------------------------------------------------------------
 -- script        : gfcbuildpriv.sql
 --
 -- created by    : David Kurtz
@@ -14,27 +15,26 @@
 -- date           author            version   reference           description
 -- ------------   ----------------- -------   ------------        --------------------
 -- 10.01.2013     David Kurtz       1.01                          Added privileges required by metadata package
+-- 25.06.2021                       1.02                          Extract ownerid from ps.psdbowner
 --------------------------------------------------------------------------------------
-
-rem (c) Go-Faster Consultancy Ltd.
-
 spool gfcbuildpriv
+set echo on
+@@ownerid
+--------------------------------------------------------------------------------------
+GRANT CREATE ANY CONTEXT TO &&ownerid;
 
-GRANT CREATE ANY CONTEXT TO sysadm;
+GRANT SELECT ON ps.psdbowner TO &&ownerid;
 
-GRANT SELECT ON ps.psdbowner TO sysadm;
-
-GRANT SELECT ON sys.v_$session TO sysadm;
-GRANT SELECT ON sys.v_$parameter TO sysadm;
-GRANT SELECT ON sys.v_$version TO sysadm;
-GRANT SELECT ON sys.dba_tables TO sysadm;
-GRANT SELECT ON sys.dba_tab_partitions TO sysadm;
-GRANT SELECT ON sys.dba_ind_partitions TO sysadm;
+GRANT SELECT ON sys.v_$session TO &&ownerid;
+GRANT SELECT ON sys.v_$parameter TO &&ownerid;
+GRANT SELECT ON sys.v_$version TO &&ownerid;
+GRANT SELECT ON sys.dba_tables TO &&ownerid;
+GRANT SELECT ON sys.dba_tab_partitions TO &&ownerid;
+GRANT SELECT ON sys.dba_ind_partitions TO &&ownerid;
 
 --10.1.2013 added privileges requird by metadata package
-GRANT SELECT on sys.dba_tablespaces    TO sysadm;
-GRANT SELECT on sys.dba_objects        TO sysadm;
-
-
+GRANT SELECT on sys.dba_tablespaces    TO &&ownerid;
+GRANT SELECT on sys.dba_objects        TO &&ownerid;
+--------------------------------------------------------------------------------------
 spool off
 

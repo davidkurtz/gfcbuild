@@ -1,5 +1,5 @@
 rem gfcbuildone.sql
-rem (c) Go-Faster Consultancy Ltd.
+rem (c) Go-Faster Consultancy 2021
 clear screen
 
 spool gfcbuild
