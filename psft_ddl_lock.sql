@@ -36,7 +36,7 @@ rem 20018-DDL on Index of Table with shadow Global Temporary Table
 set echo on feedback on verify on lines 100 timi on 
 spool psft_ddl_lock
 ---------------------------------------------------------------------------------------
-@@psdbowner
+@@psownerid
 ---------------------------------------------------------------------------------------
 CREATE INDEX &&ownerid..pszpsrecdefn_fbi 
 ON &&ownerid..psrecdefn (DECODE(sqltablename,' ','PS_'||recname,sqltablename))

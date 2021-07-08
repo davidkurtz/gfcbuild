@@ -5,7 +5,7 @@ rem ***Version History moved to procedure history
 set echo on termout on
 spool gfcbuildpkgbody
 
-@@ownerid
+@@psownerid
 -------------------------------------------------------------------------------------------------------
 -- source Code
 -------------------------------------------------------------------------------------------------------
