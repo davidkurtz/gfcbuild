@@ -678,8 +678,8 @@ BEGIN
 --mapping between ranges and lists
 -----------------------------------------------------------------------------------------------------------
   msg('Insert WL range-v-list partition mapping metadata');
-  INSERT INTO gfc_part_range_Lists
-  (part_id, range_name, list_name)
+  INSERT INTO gfc_part_subparts
+  (part_id, part_name, subpart_name)
   SELECT r.part_id, r.part_name, l.part_name
   FROM   gfc_part_ranges r
   ,      gfc_part_lists l
@@ -984,6 +984,7 @@ BEGIN
   truncmeta;
   gl_partdata;
 
+  msg('Checking Compression Attributes -v- Metadta');
   FOR i IN ( --table level compression where all the partitions are the same
 with tp as (
 SELECT table_name, compression, compress_for
