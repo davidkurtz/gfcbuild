@@ -5,7 +5,7 @@ spool gfcbuildpkg
 
 set serveroutput on buffer 1000000000 verify on feedback on lines 120 timing off autotrace off pause off echo off termout on
 
-@@ownerid
+@@psownerid
 
 ALTER SESSION SET recyclebin = off;
 ALTER SESSION SET current_schema=&&ownerid;

@@ -69,6 +69,8 @@ CREATE OR REPLACE PACKAGE gfc_partdata AS
 --------------------------------------------------------------------------------------------------------------
 PROCEDURE partdata;        --head procedure that calls others
 PROCEDURE gp_partdata;     --GP metadata
+PROCEDURE index_comp;  --set index compression in PeopleTools tables
+PROCEDURE comp_attrib; --procedure to apply compression attributes to existing tables
 --------------------------------------------------------------------------------------------------------------
 END gfc_partdata;
 /
@@ -125,9 +127,9 @@ END exec_sql;
 PROCEDURE del_partdata 
 (p_part_id VARCHAR2)
 IS
-  k_action CONSTANT VARCHAR2(48) := 'DEL_PARTDATA';
-  l_module VARCHAR2(48);
-  l_action VARCHAR2(32);
+  k_action CONSTANT VARCHAR2(64) := 'DEL_PARTDATA';
+  l_module v$session.module%TYPE;
+  l_action v$session.action%TYPE;
   l_num_rows INTEGER; --variable to hold number of rows processed
 BEGIN
   dbms_application_info.read_module(module_name=>l_module, action_name=>l_action);
@@ -159,7 +161,7 @@ BEGIN
   msg(TO_CHAR(SQL%ROWCOUNT)||' rows deleted.');
 
   msg('Delete pre-existing '||p_part_id||' range-v-list partition mapping metadata');
-  DELETE FROM gfc_part_range_lists
+  DELETE FROM gfc_part_subparts
   WHERE part_id LIKE p_part_id;
   msg(TO_CHAR(SQL%ROWCOUNT)||' rows deleted.');
 
@@ -171,9 +173,9 @@ END del_partdata;
 --PROCEDURE TO POPULATE GP METADATA
 --------------------------------------------------------------------------------------------------------------
 PROCEDURE gp_partdata IS
-  k_action CONSTANT VARCHAR2(48) := 'GP_PARTDATA';
-  l_module VARCHAR2(48);
-  l_action VARCHAR2(32);
+  k_action CONSTANT VARCHAR2(64) := 'GL_PARTDATA';
+  l_module v$session.module%TYPE;
+  l_action v$session.action%TYPE;
 BEGIN
   dbms_application_info.read_module(module_name=>l_module, action_name=>l_action);
   dbms_application_info.set_module(module_name=>k_module, action_name=>k_action);
@@ -815,25 +817,263 @@ END ppm_partdata;
 
 
 --------------------------------------------------------------------------------------------------------------
---------------------------------------------------------------------------------------------------------------
---procedure to call all other partdata procedures
---------------------------------------------------------------------------------------------------------------
-PROCEDURE partdata IS
-  k_action CONSTANT VARCHAR2(48) := 'PARTDATA';
-  l_module VARCHAR2(48);
-  l_action VARCHAR2(32);
+-----------------------------------------------------------------------------------------------------------
+PROCEDURE index_comp IS
+  k_action CONSTANT VARCHAR2(64) := 'INDEX_COMP';
+  l_module v$session.module%TYPE;
+  l_action v$session.action%TYPE;
 BEGIN
   dbms_application_info.read_module(module_name=>l_module, action_name=>l_action);
   dbms_application_info.set_module(module_name=>k_module, action_name=>k_action);
 
-msg('Truncating metadata tables');
-exec_sql('TRUNCATE TABLE gfc_part_tables');
-exec_sql('TRUNCATE TABLE gfc_part_ranges');
-exec_sql('TRUNCATE TABLE gfc_temp_tables');
-exec_sql('TRUNCATE TABLE gfc_part_lists');
---exec_sql('TRUNCATE TABLE gfc_part_range_lists'); --7.1.2015 renamed as gfc_part_subparts
-exec_sql('TRUNCATE TABLE gfc_part_subparts');
-exec_sql('TRUNCATE TABLE gfc_part_indexes');
+  msg('Setting Index Compression in DDL Overrides on Record');
+
+  update pslock    set version = version + 1 where objecttypename IN('SYS','RDM');
+  update psversion set version = version + 1 where objecttypename IN('SYS','RDM');
+  
+  update psrecdefn 
+  set    version = (SELECT version FROM psversion WHERE objecttypename = 'RDM')
+  ,      lastupddttm = SYSDATE
+  ,      lastupdoprid = k_module
+  where  recname IN('LEDGER','LEDGER_BUDG','S_FT_ACCTDET','S_FT_CICA_SUML','S_FT_USEXP','S_FT_USGEO','S_FT_USIRP','S_FT_USSTAT','S_LEDGER_ACCTS','S_LRG_ACT_CA');
+  
+  delete from psidxddlparm p
+  where  recname IN('LEDGER','LEDGER_BUDG','S_FT_ACCTDET','S_FT_CICA_SUML','S_FT_USEXP','S_FT_USGEO','S_FT_USIRP','S_FT_USSTAT','S_LEDGER_ACCTS','S_LRG_ACT_CA')
+  and    parmname IN('PCTFREE','INIT','NEXT');
+  
+  insert into psidxddlparm
+  select recname, indexid, 2, 0, 'PCTFREE', '5'||CASE indexid 
+    WHEN 'C' THEN ' COMPRESS 5' --erroneously 7
+    WHEN 'D' THEN ' COMPRESS 4'
+    WHEN 'E' THEN ' COMPRESS 1'
+    WHEN 'F' THEN ' COMPRESS 4' --erroneously 7
+    WHEN 'G' THEN ' COMPRESS 1'
+    WHEN '_' THEN ' COMPRESS 3'
+  END
+  from  psindexdefn
+  where recname = 'LEDGER'
+  and   platform_ora = 1;
+
+  insert into psidxddlparm
+  select recname, indexid, 2, 0, 'PCTFREE', '5'||CASE indexid 
+    WHEN '_' THEN ' COMPRESS 4'
+  END
+  from  psindexdefn
+  where recname = 'LEDGER_BUDG'
+  and   platform_ora = 1 ;
+ 
+  insert into psidxddlparm
+  select recname, indexid, 2, 0, 'PCTFREE', '5'||CASE indexid 
+    WHEN '_' THEN ' COMPRESS 6'
+  END
+  from  psindexdefn
+  where recname = 'S_FT_ACCTDET'
+  and   platform_ora = 1 ;
+
+  insert into psidxddlparm
+  select recname, indexid, 2, 0, 'PCTFREE', '5'||CASE indexid 
+    WHEN '_' THEN ' COMPRESS 7'
+  END
+  from  psindexdefn
+  where recname = 'S_FT_CICA_SUML'
+  and   platform_ora = 1 ;
+
+  insert into psidxddlparm
+  select recname, indexid, 2, 0, 'PCTFREE', '5'||CASE indexid 
+    WHEN '_' THEN ' COMPRESS 3'
+  END
+  from  psindexdefn
+  where recname = 'S_FT_USEXP'
+  and   platform_ora = 1 ;
+
+  insert into psidxddlparm
+  select recname, indexid, 2, 0, 'PCTFREE', '5'||CASE indexid 
+    WHEN 'C' THEN ' COMPRESS 4'
+    WHEN '_' THEN ' COMPRESS 3'
+  END
+  from  psindexdefn
+  where recname = 'S_FT_USGEO'
+  and   platform_ora = 1 ;
+
+  insert into psidxddlparm
+  select recname, indexid, 2, 0, 'PCTFREE', '5'||CASE indexid 
+    WHEN '_' THEN ' COMPRESS 3'
+  END
+  from  psindexdefn
+  where recname = 'S_FT_USIRP'
+  and   platform_ora = 1 ;
+
+  insert into psidxddlparm
+  select recname, indexid, 2, 0, 'PCTFREE', '5'||CASE indexid 
+    WHEN 'C' THEN ' COMPRESS 6'
+    WHEN '_' THEN ' COMPRESS 4'
+  END
+  from  psindexdefn
+  where recname = 'S_FT_USSTAT'
+  and   platform_ora = 1 ;
+
+  insert into psidxddlparm
+  select recname, indexid, 2, 0, 'PCTFREE', '5'||CASE indexid 
+    WHEN '_' THEN ' COMPRESS 5'
+  END
+  from  psindexdefn
+  where recname = 'S_LEDGER_ACCTS'
+  and   platform_ora = 1 ;
+
+  insert into psidxddlparm
+  select recname, indexid, 2, 0, 'PCTFREE', '5'||CASE indexid 
+    WHEN 'A' THEN ' COMPRESS 4'
+    WHEN 'B' THEN ' COMPRESS 6'
+    WHEN '_' THEN ' COMPRESS 7'
+  END
+  from  psindexdefn
+  where recname = 'S_LRG_ACT_CA'
+  and   platform_ora = 1 ;
+
+  update psindexdefn i
+  set    platform_ora = 0
+  where  recname IN('S_FT_ACCTDET','S_FT_CICA_SUML','S_FT_USEXP','S_FT_USGEO','S_FT_USIRP','S_FT_USSTAT','S_LEDGER_ACCTS','S_LRG_ACT_CA')
+  and    platform_ora = 1
+  and    indexid != '_';
+
+  update psindexdefn i
+  set    ddlcount = (SELECT COUNT(DISTINCT platformid) 
+                     FROM   psidxddlparm d
+                     WHERE  d.recname = i.recname
+                     AND    d.indexid = i.indexid)
+  where recname IN('LEDGER','LEDGER_BUDG','S_FT_ACCTDET','S_FT_CICA_SUML','S_FT_USEXP','S_FT_USGEO','S_FT_USIRP','S_FT_USSTAT','S_LEDGER_ACCTS','S_LRG_ACT_CA');
+
+  commit;
+
+  dbms_application_info.set_module(module_name=>l_module, action_name=>l_action);
+END index_comp;
+--------------------------------------------------------------------------------------------------------------
+--------------------------------------------------------------------------------------------------------------
+--procedure to truncate metdata tables
+--------------------------------------------------------------------------------------------------------------
+PROCEDURE truncmeta IS
+  k_action CONSTANT VARCHAR2(64) := 'TRUNCMETA';
+  l_module v$session.module%TYPE;
+  l_action v$session.action%TYPE;
+BEGIN
+  dbms_application_info.read_module(module_name=>l_module, action_name=>l_action);
+  dbms_application_info.set_module(module_name=>k_module, action_name=>k_action);
+
+  msg('Truncating metadata tables');
+  exec_sql('TRUNCATE TABLE gfc_part_tables');
+  exec_sql('TRUNCATE TABLE gfc_part_ranges');
+  exec_sql('TRUNCATE TABLE gfc_temp_tables');
+  exec_sql('TRUNCATE TABLE gfc_part_lists');
+  exec_sql('TRUNCATE TABLE gfc_part_subparts');
+  exec_sql('TRUNCATE TABLE gfc_part_indexes');
+
+  dbms_application_info.set_module(module_name=>l_module, action_name=>l_action);
+END truncmeta;
+--------------------------------------------------------------------------------------------------------------
+--procedure to apply compression attributes to tables
+--------------------------------------------------------------------------------------------------------------
+PROCEDURE comp_attrib IS
+  k_action CONSTANT VARCHAR2(64) := 'COMP_ATTRIB';
+  l_module v$session.module%TYPE;
+  l_action v$session.action%TYPE;
+  l_sql CLOB;
+BEGIN
+  dbms_application_info.read_module(module_name=>l_module, action_name=>l_action);
+  dbms_application_info.set_module(module_name=>k_module, action_name=>k_action);
+
+  truncmeta;
+  gl_partdata;
+
+  FOR i IN ( --table level compression where all the partitions are the same
+with tp as (
+SELECT table_name, compression, compress_for
+,      count(*) num_parts
+FROM   user_tab_partitions
+GROUP BY table_name, compression, compress_for
+), t as (
+select tp.*, count(*) over (partition by table_name) compression_types
+from tp
+), x as (
+select pt.part_id, pt.part_type, t.table_name
+,      regexp_substr(pt.tab_storage,'(COMPRESS|NOCOMPRESS)[ [:alnum:]]+',1,1,'i') tab_storage
+,      t.compression, t.compress_for
+FROM   psrecdefn r
+INNER JOIN t
+  ON t.table_name = DECODE(r.sqltablename,' ','PS_'||r.recname,r.sqltablename)
+  AND t.compression_types = 1
+INNER JOIN gfc_part_tables pt
+  ON r.recname = pt.recname
+), y as (
+SELECT x.*
+, CASE WHEN compression = 'ENABLED' AND UPPER(tab_storage) = 'COMPRESS FOR '||x.compress_for THEN NULL --do nothing
+       WHEN compression = 'ENABLED' AND compress_for = 'BASIC' AND UPPER(tab_storage) = 'COMPRESS' THEN NULL --do nothing
+       WHEN compression IN('DISABLED','NONE') AND (UPPER(tab_storage) = 'NOCOMPRESS' OR tab_storage IS NULL) THEN NULL --do nothing
+       WHEN tab_storage IS NULL AND x.compression = 'ENABLED' THEN 'NOCOMPRESS'
+       ELSE x.tab_storage
+  END cmd
+FROM x
+)
+SELECT * FROM y
+WHERE cmd IS NOT NULL
+ORDER BY 1,2,3,4
+) LOOP
+    l_sql := 'ALTER TABLE '||i.table_name||' '||i.cmd;
+    dbms_output.put_line(l_sql);
+    EXECUTE IMMEDIATE l_sql;
+  END LOOP;
+
+  FOR i IN ( --partition level compression settings
+with x as (
+select pt.part_id, pt.part_type, t.table_name, pr.part_name, tp.partition_name
+,      COALESCE(regexp_substr(pr.tab_storage,'(COMPRESS|NOCOMPRESS)[ [:alnum:]]+',1,1,'i')
+               ,regexp_substr(pt.tab_storage,'(COMPRESS|NOCOMPRESS)[ [:alnum:]]+',1,1,'i')
+               )  tab_storage
+,      COALESCE(tp.compression, t.compression) compression
+,      COALESCE(tp.compress_for, t.compress_for) compress_for
+FROM   psrecdefn r
+INNER JOIN user_tables t
+  ON t.table_name = DECODE(r.sqltablename,' ','PS_'||r.recname,r.sqltablename)
+INNER JOIN gfc_part_tables pt
+  ON r.recname = pt.recname
+INNER JOIN gfc_part_ranges pr
+  ON  pt.part_type = 'R'
+  AND pr.part_id = pt.part_id
+INNER JOIN user_tab_partitions tp
+ ON tp.table_name = t.table_name
+ AND tp.partition_name = pt.recname||'_'||pr.part_name
+), y as (
+SELECT x.*
+, CASE WHEN compression = 'ENABLED' AND UPPER(tab_storage) = 'COMPRESS FOR '||x.compress_for THEN NULL --do nothing
+       WHEN compression = 'ENABLED' AND compress_for = 'BASIC' AND UPPER(tab_storage) = 'COMPRESS' THEN NULL --do nothing
+       WHEN compression IN('DISABLED','NONE') AND (UPPER(tab_storage) = 'NOCOMPRESS' OR tab_storage IS NULL) THEN NULL --do nothing
+       WHEN tab_storage IS NULL AND x.compression = 'ENABLED' THEN 'NOCOMPRESS'
+       ELSE x.tab_storage
+  END cmd
+FROM x
+)
+SELECT * FROM y
+WHERE cmd IS NOT NULL
+ORDER BY 1,2,3,4
+) LOOP
+    l_sql := 'ALTER TABLE '||i.table_name||' MODIFY PARTITION '||i.partition_name||' '||i.cmd;
+    dbms_output.put_line(l_sql);
+    EXECUTE IMMEDIATE l_sql;
+  END LOOP;
+  
+  dbms_application_info.set_module(module_name=>l_module, action_name=>l_action);
+END comp_attrib;
+--------------------------------------------------------------------------------------------------------------
+--procedure to call all other partdata procedures
+--------------------------------------------------------------------------------------------------------------
+PROCEDURE partdata IS
+  k_action CONSTANT VARCHAR2(64) := 'PARTDATA';
+  l_module v$session.module%TYPE;
+  l_action v$session.action%TYPE;
+BEGIN
+  dbms_application_info.read_module(module_name=>l_module, action_name=>l_action);
+  dbms_application_info.set_module(module_name=>k_module, action_name=>k_action);
+
+  truncmeta;
 
 --gp_partdata;
 wl_partdata;
@@ -871,6 +1111,7 @@ show errors
 
 set pause on
 EXECUTE gfc_partdata.partdata;
+--EXECUTE gfc_partdata.comp_attrib;
 
 spool off
 

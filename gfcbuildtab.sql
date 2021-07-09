@@ -173,7 +173,7 @@ TABLE &&ownerid..gfc_part_tables
 );
 
 --13.5.2021 --backward compatibility trigger to set subpart_id=part_id
-CREATE OR REPLACE TRIGGER sysadm.gfc_part_tables_subpart_id 
+CREATE OR REPLACE TRIGGER &&ownerid...gfc_part_tables_subpart_id 
 BEFORE INSERT OR UPDATE 
 ON &&ownerid..gfc_part_tables FOR EACH ROW
 BEGIN
