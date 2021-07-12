@@ -46,7 +46,7 @@ PROCEDURE set_defaults
 ,p_logging         VARCHAR2 DEFAULT ''
 ,p_parallel_table  VARCHAR2 DEFAULT ''
 ,p_parallel_index  VARCHAR2 DEFAULT ''
-,p_force_ddl_dop   VARCHAR2 DEFAULT ''
+,p_force_para_dop  VARCHAR2 DEFAULT ''
 ,p_roles           VARCHAR2 DEFAULT ''
 ,p_scriptid        VARCHAR2 DEFAULT ''
 ,p_update_all      VARCHAR2 DEFAULT ''

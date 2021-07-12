@@ -50,7 +50,7 @@ l_chardef VARCHAR2(1 CHAR);             -- permit VARCHAR2 character definition
 l_logging VARCHAR2(1 CHAR);             -- set to Y to generate build script that logs
 l_parallel_index VARCHAR2(1 CHAR);      -- set to true to enable parallel index build
 l_parallel_table VARCHAR2(1 CHAR);      -- set to true to enable parallel index build
-l_force_ddl_dop VARCHAR2(2 CHAR);       -- forced degree of parallelism
+l_force_para_dop VARCHAR2(2 CHAR);      -- forced degree of parallelism
 l_roles VARCHAR2(1 CHAR);               -- should roles be granted
 l_scriptid VARCHAR2(8 CHAR);            -- id string in script and project names
 l_update_all VARCHAR2(30 CHAR);         -- name of role than can update PS tables
@@ -237,7 +237,7 @@ BEGIN
   l_logging := 'N';                -- set to Y to generate build script that logs
   l_parallel_table := 'Y';         -- set to true to enable parallelism on table copy
   l_parallel_index := 'Y';         -- set to true to enable parallel index build
-  l_force_ddl_dop := '';           -- value to append to parallel keyword
+  l_force_para_dop := '';          -- value to append to parallel keyword
   l_roles := 'N';                  -- should roles be granted
   l_scriptid := 'GFCBUILD';        -- id string in script and project names
   l_update_all := '';              -- 11.12.2013 no default update all role any more
@@ -280,7 +280,7 @@ BEGIN
   l_logging          := NVL(SYS_CONTEXT(k_sys_context,'logging'        ),l_logging);
   l_parallel_table   := NVL(SYS_CONTEXT(k_sys_context,'parallel_table' ),l_parallel_table);
   l_parallel_index   := NVL(SYS_CONTEXT(k_sys_context,'parallel_index' ),l_parallel_index);
-  l_force_ddl_dop    := NVL(SYS_CONTEXT(k_sys_context,'force_ddl_dop'  ),l_force_ddl_dop);
+  l_force_para_dop   := NVL(SYS_CONTEXT(k_sys_context,'force_para_dop'  ),l_force_para_dop);
   l_roles            := NVL(SYS_CONTEXT(k_sys_context,'roles'          ),l_roles);
   l_scriptid         := NVL(SYS_CONTEXT(k_sys_context,'scriptid'       ),l_scriptid);
   l_update_all       := NVL(SYS_CONTEXT(k_sys_context,'update_all'     ),l_update_all);
@@ -322,7 +322,7 @@ BEGIN
   dbms_session.set_context(k_sys_context,'logging'          ,l_logging);
   dbms_session.set_context(k_sys_context,'parallel_table'   ,l_parallel_table);
   dbms_session.set_context(k_sys_context,'parallel_index'   ,l_parallel_index);
-  dbms_session.set_context(k_sys_context,'force_ddl_dop'    ,l_force_ddl_dop);
+  dbms_session.set_context(k_sys_context,'force_para_dop'   ,l_force_para_dop);
   dbms_session.set_context(k_sys_context,'roles'            ,l_roles);
   dbms_session.set_context(k_sys_context,'scriptid'         ,l_scriptid);
   dbms_session.set_context(k_sys_context,'update_all'       ,l_update_all);
@@ -1357,8 +1357,9 @@ PROCEDURE forceddldop(p_type NUMBER) IS
 		dbms_application_info.read_module(module_name=>l_module, action_name=>l_action);
     set_action(p_action_name=>'FORCEDDLDOP');
 
-    IF l_force_ddl_dop IS NOT NULL THEN
-      ins_line(p_type,'ALTER SESSION FORCE PARALLEL DDL PARALLEL '||l_force_ddl_dop||';');
+    IF l_force_para_dop IS NOT NULL THEN
+      ins_line(p_type,'ALTER SESSION FORCE PARALLEL DDL PARALLEL '||l_force_para_dop||';');
+      ins_line(p_type,'ALTER SESSION FORCE PARALLEL DML PARALLEL '||l_force_para_dop||';');
     END IF;
     ins_line(p_type,'');
 
@@ -2200,16 +2201,16 @@ PROCEDURE tab_part_ranges(p_type NUMBER, p_recname VARCHAR2, p_part_id VARCHAR2,
 			                                              ||'_'||p_tab_part_ranges.part_name);
 			l_part_def := l_part_def||' VALUES LESS THAN ('||p_tab_part_ranges.part_value||')';
 			IF LENGTH(l_part_def) > k_max_line_length_margin THEN
-	                        ins_line(p_type,l_part_def);
+	            ins_line(p_type,l_part_def);
 				l_part_def := '';
 			END IF;
 			IF p_tab_part_ranges.partial_index = 'Y' THEN
 				l_part_def := l_part_def||' INDEXING ON';
 			ELSIF p_tab_part_ranges.partial_index = 'N' THEN
 				l_part_def := l_part_def||' INDEXING OFF';
-                        END IF;
+			END IF;
 			IF LENGTH(l_part_def) > 0 THEN
-	                        ins_line(p_type,l_part_def);
+				ins_line(p_type,l_part_def);
 				l_part_def := '';
 			END IF;
             IF p_tab_part_ranges.tab_tablespace IS NOT NULL THEN
@@ -2300,7 +2301,7 @@ PROCEDURE tab_part_lists(p_type NUMBER, p_recname VARCHAR2, p_part_id VARCHAR2,
                         END IF;
                         l_part_def := l_part_def||'PARTITION '||LOWER(p_recname||'_'||p_tab_part_lists.part_name);
                         ins_line(p_type,l_part_def);
-			l_part_def := ' VALUES ('||p_tab_part_lists.list_value||')';
+						l_part_def := ' VALUES ('||p_tab_part_lists.list_value||')';
                         IF LENGTH(l_part_def) > k_max_line_length_margin THEN --26.11.2020 added partial index support
 							ins_line(p_type,l_part_def);
 							l_part_def := '';
@@ -2312,8 +2313,8 @@ PROCEDURE tab_part_lists(p_type NUMBER, p_recname VARCHAR2, p_part_id VARCHAR2,
 						END IF;
                         ins_line(p_type,l_part_def);
             			l_part_def := '';
-                        IF p_tab_part_lists.tab_tablespace IS NOT NULL THEN
-                                l_part_def := l_part_def||' TABLESPACE '||p_tab_part_lists.tab_tablespace;
+						IF p_tab_part_lists.tab_tablespace IS NOT NULL THEN
+							l_part_def := l_part_def||' TABLESPACE '||p_tab_part_lists.tab_tablespace;
                         END IF;
                         IF p_tab_part_lists.tab_storage IS NOT NULL THEN
                                 l_part_def := l_part_def||' '||tab_storage(p_recname, p_tab_part_lists.tab_storage); -- 6.9.2007
@@ -2710,38 +2711,38 @@ PROCEDURE mk_part_indexes(p_recname    VARCHAR2
                                  ,p_schema     VARCHAR2
                                  ,p_arch_flag  VARCHAR2 
                                  ) IS
-                l_ind_def VARCHAR2(100 CHAR);
+        l_ind_def VARCHAR2(100 CHAR);
 		l_type INTEGER;
 		l_schema VARCHAR2(31 CHAR);
 		l_ind_prefix VARCHAR2(3 CHAR);
 		l_module v$session.module%type;
 		l_action v$session.action%type;
-	BEGIN
-		dbms_application_info.read_module(module_name=>l_module, action_name=>l_action);
-		set_action(p_action_name=>'MK_PART_INDEXES');
+BEGIN
+	dbms_application_info.read_module(module_name=>l_module, action_name=>l_action);
+	set_action(p_action_name=>'MK_PART_INDEXES');
 
-		debug_msg('mk_part_indexes:'||p_recname||'/'||p_schema||'.'||p_table_name||'/arch_flag='||p_arch_flag,6);
+	debug_msg('mk_part_indexes:'||p_recname||'/'||p_schema||'.'||p_table_name||'/arch_flag='||p_arch_flag,6);
 
     -- ins_line(k_index,'set echo on pause off verify on feedback on timi on autotrace off pause off lines 100');
     -- ins_line(k_index,LOWER('spool gfcindex_'||l_dbname||'_'||p_recname||'.lst'));
     signature(k_index,FALSE,'gfcindex',p_recname);
     whenever_sqlerror(k_index,TRUE);
     forceddldop(k_index);
-		ddlpermit(k_index,TRUE); -- added 10.10.2007
+	ddlpermit(k_index,TRUE); -- added 10.10.2007
 -- 25.5.2011 do not build unique index on IOT
-                FOR p_indexes IN(
-                	SELECT   g.indexid, g.uniqueflag, g.platform_ora
-	                ,        p.RECNAME
-	                ,        NVL(i.part_id,p.part_id) part_id
-	                ,        NVL(i.part_type,p.part_type) part_type
-	                ,        NVL(i.part_column,p.part_column) part_column
-	                ,        NVL(i.subpart_type,p.subpart_type) subpart_type
+    FOR p_indexes IN(
+       	SELECT   g.indexid, g.uniqueflag, g.platform_ora
+		,        p.RECNAME
+	    ,        NVL(i.part_id,p.part_id) part_id
+	    ,        NVL(i.part_type,p.part_type) part_type
+	    ,        NVL(i.part_column,p.part_column) part_column
+	    ,        NVL(i.subpart_type,p.subpart_type) subpart_type
 					,        NVL(i.hash_partitions,p.hash_partitions) hash_partitions
 	                ,        NVL(i.subpart_column,p.subpart_column) subpart_column 
 					, 	     NVL(i.idx_tablespace,p.idx_tablespace) idx_tablespace
 	                ,        NVL(i.idx_storage,p.idx_storage) idx_storage
 	                ,        NVL(i.override_schema,p.override_schema) override_schema
-			,        CASE WHEN p.part_type = 'N' THEN 'G' -- added 9.11.2011 to support partitioned indexes on non-partitioned tables
+					,        CASE WHEN p.part_type = 'N' THEN 'G' -- added 9.11.2011 to support partitioned indexes on non-partitioned tables
                                   WHEN i.indexid IS NULL THEN 'L' -- separated 20.11.2020 
 								  WHEN i.part_type = p.part_type  -- added 20.11.2020 to match table to index partitioning
 								   AND i.part_column = p.part_column 
@@ -2751,60 +2752,60 @@ PROCEDURE mk_part_indexes(p_recname    VARCHAR2
  			                      ELSE 'G'
 			                 END AS ind_part_type
 					,        i.partial_index
-			,        i.name_suffix
+					,        i.name_suffix
         	        FROM     gfc_ps_indexdefn g -- 6.9.2007 removed psindexdefn
 			         LEFT OUTER JOIN gfc_part_indexes i
 			         ON i.recname = g.recname
 			         AND i.indexid = g.indexid
                 	,        gfc_part_tables p
 	                WHERE    p.recname = g.recname
-			AND      g.recname = p_recname
+					AND      g.recname = p_recname
                 	AND      p.recname = p_recname
-			AND      g.platform_ora = 1
-			AND      NOT (p.organization = 'I' AND g.indexid = '_') 
-			ORDER BY g.indexid)
+					AND      g.platform_ora = 1
+					AND      NOT (p.organization = 'I' AND g.indexid = '_') 
+					ORDER BY g.indexid)
                 LOOP
 	                IF l_explicit_schema = 'Y' THEN
-				l_schema := NVL(p_indexes.override_schema,LOWER(p_schema))||'.';
-			ELSE 
-				l_schema := '';
-			END IF;
+						l_schema := NVL(p_indexes.override_schema,LOWER(p_schema))||'.';
+					ELSE 
+						l_schema := '';
+					END IF;
 
-                        --first do indexes for standard build script --
-                        whenever_sqlerror(k_index,FALSE);
-			IF l_drop_index = 'Y' THEN 
+                    --first do indexes for standard build script --
+                    whenever_sqlerror(k_index,FALSE);
+					IF l_drop_index = 'Y' THEN 
 	       	                ins_line(k_index,'DROP INDEX '
                                           ||LOWER(l_schema||'ps'||p_indexes.indexid||p_recname||p_indexes.name_suffix));
        		                ins_line(k_index,'/');
        	        	        ins_line(k_index,'');
-			END IF;
+					END IF;
 
-               	        whenever_sqlerror(k_index,TRUE);
-                        FOR l_type IN 0..1 LOOP -- do the index create twice
-				IF l_type = 0 THEN
-					l_ind_prefix := 'gfc';
-				ELSE
-					l_ind_prefix := 'ps';
-				END IF;
-                                l_ind_def := 'CREATE';
-       	                        IF p_indexes.uniqueflag = 1 THEN
-               	                        l_ind_def := l_ind_def||' UNIQUE';
-                       	        END IF;
-                               	l_ind_def := l_ind_def||' INDEX '||
-                                        LOWER(l_schema||l_ind_prefix||p_indexes.indexid||p_recname||p_indexes.name_suffix)||
-                                        ' ON '||LOWER(l_schema||l_ind_prefix||'_'||p_recname);
-                                ins_line(l_type,l_ind_def);
-       	                        ind_cols(l_type,p_recname,p_indexes.indexid,l_desc_index);
-				IF p_indexes.ind_part_type = 'L' THEN -- local partitioning
-                        	        ins_line(l_type,'LOCAL');
-					IF p_indexes.part_type = 'L' THEN
-        	                        	ind_part_lists(p_type=>l_type,
-						          p_recname=>p_recname,
-						          p_indexid=>p_indexes.indexid,
-						          p_part_id=>p_indexes.part_id,
-						          p_subpart_type=>p_indexes.subpart_type,
-					        	  p_subpartitions=>p_indexes.hash_partitions);
-					ELSIF p_indexes.part_type = 'R' THEN
+               	    whenever_sqlerror(k_index,TRUE);
+                    FOR l_type IN 0..1 LOOP -- do the index create twice
+						IF l_type = 0 THEN
+							l_ind_prefix := 'gfc';
+						ELSE
+							l_ind_prefix := 'ps';
+						END IF;
+						l_ind_def := 'CREATE';
+						IF p_indexes.uniqueflag = 1 THEN
+							l_ind_def := l_ind_def||' UNIQUE';
+						END IF;
+						l_ind_def := l_ind_def||' INDEX '||
+								LOWER(l_schema||l_ind_prefix||p_indexes.indexid||p_recname||p_indexes.name_suffix)||
+                                ' ON '||LOWER(l_schema||l_ind_prefix||'_'||p_recname);
+						ins_line(l_type,l_ind_def);
+						ind_cols(l_type,p_recname,p_indexes.indexid,l_desc_index);
+						IF p_indexes.ind_part_type = 'L' THEN -- local partitioning
+							ins_line(l_type,'LOCAL');
+							IF p_indexes.part_type = 'L' THEN
+								ind_part_lists(p_type=>l_type,
+							                   p_recname=>p_recname,
+						                       p_indexid=>p_indexes.indexid,
+						                   p_part_id=>p_indexes.part_id,
+						                   p_subpart_type=>p_indexes.subpart_type,
+					        	           p_subpartitions=>p_indexes.hash_partitions);
+							ELSIF p_indexes.part_type = 'R' THEN
         	                        	ind_part_ranges(p_type=>l_type,
 					          p_recname=>p_recname,
 					          p_indexid=>p_indexes.indexid,
@@ -2816,104 +2817,104 @@ PROCEDURE mk_part_indexes(p_recname    VARCHAR2
 					          p_index_prefix=>'PS',
 					          p_part_name=>p_recname);
 							ELSIF p_indexes.part_type = 'H' AND p_indexes.hash_partitions > 1 THEN
-						ind_hashparts(l_type,p_recname
+								ind_hashparts(l_type,p_recname
 					                    ,p_indexes.indexid,p_indexes.hash_partitions);
-					END IF;
+							END IF;
 
-				ELSIF p_indexes.part_type IN('R') THEN -- add global range index clause here
-					IF p_indexes.part_type = 'R' THEN
+						ELSIF p_indexes.part_type IN('R') THEN -- add global range index clause here
+							IF p_indexes.part_type = 'R' THEN
        				                ins_line(l_type,'GLOBAL PARTITION BY RANGE ('
    						        ||p_indexes.part_column||')');
-					ELSE -- list-although oracle doesn't support this yet!
+							ELSE -- list-although oracle doesn't support this yet!
        				                ins_line(l_type,'GLOBAL PARTITION BY LIST('
 						        ||p_indexes.part_column||')');
-					END IF;
-		       	                IF p_indexes.subpart_type = 'H' AND 
-					   p_indexes.hash_partitions > 1 AND 
-					   p_indexes.subpart_column IS NOT NULL THEN
-						ins_line(l_type,'SUBPARTITION BY HASH ('||p_indexes.subpart_column
-						          ||') SUBPARTITIONS '||p_indexes.hash_partitions);
-					ELSIF p_indexes.subpart_type = 'L' AND 
-					      p_indexes.subpart_column IS NOT NULL THEN
-						ins_line(l_type,'SUBPARTITION BY LIST ('||p_indexes.subpart_column||')');
-					END IF;
-		                        glob_ind_parts(l_type,p_indexes.recname, p_indexes.indexid, p_indexes.part_id,
+							END IF;
+		       	            IF p_indexes.subpart_type = 'H' AND 
+							   p_indexes.hash_partitions > 1 AND 
+							   p_indexes.subpart_column IS NOT NULL THEN
+								ins_line(l_type,'SUBPARTITION BY HASH ('||p_indexes.subpart_column
+									     ||') SUBPARTITIONS '||p_indexes.hash_partitions);
+							ELSIF p_indexes.subpart_type = 'L' AND 
+							      p_indexes.subpart_column IS NOT NULL THEN
+								ins_line(l_type,'SUBPARTITION BY LIST ('||p_indexes.subpart_column||')');
+							END IF;
+		                    glob_ind_parts(l_type,p_indexes.recname, p_indexes.indexid, p_indexes.part_id,
 					          p_indexes.part_type, p_indexes.subpart_type,
 					          p_indexes.hash_partitions);
 
-				ELSIF p_indexes.part_type = 'H' AND p_indexes.hash_partitions > 1 THEN
-					ins_line(l_type,'GLOBAL PARTITION BY HASH ('||p_indexes.part_column||')');
-					ind_hashparts(p_type     =>l_type
-					             ,p_recname  =>p_indexes.recname
-					             ,p_indexid  =>p_indexes.indexid
-					             ,p_num_parts=>p_indexes.hash_partitions);
+						ELSIF p_indexes.part_type = 'H' AND p_indexes.hash_partitions > 1 THEN
+							ins_line(l_type,'GLOBAL PARTITION BY HASH ('||p_indexes.part_column||')');
+							ind_hashparts(p_type     =>l_type
+					                     ,p_recname  =>p_indexes.recname
+					                     ,p_indexid  =>p_indexes.indexid
+					                     ,p_num_parts=>p_indexes.hash_partitions);
 
-				END IF;
+						END IF;
 
 						IF p_indexes.partial_index = 'Y' THEN --added 26.11.2020 partial indexing support
 							ins_line(l_type,'INDEXING PARTIAL');
 						END IF;
 
-				-- index level storage clause
-                                IF p_indexes.idx_tablespace IS NOT NULL THEN
-	                                ins_line(l_type,'TABLESPACE '||p_indexes.idx_tablespace);
-       		                END IF;
-                      	        IF p_indexes.idx_storage IS NOT NULL THEN
-                        	        ins_line(l_type,idx_storage(p_recname, p_indexes.indexid, 
-					           p_indexes.idx_storage, p_indexes.hash_partitions)); -- 6.9.2007
-                                END IF;
+						-- index level storage clause
+						IF p_indexes.idx_tablespace IS NOT NULL THEN
+							ins_line(l_type,'TABLESPACE '||p_indexes.idx_tablespace);
+       		            END IF;
+                      	IF p_indexes.idx_storage IS NOT NULL THEN
+							ins_line(l_type,idx_storage(p_recname, p_indexes.indexid, 
+					                 p_indexes.idx_storage, p_indexes.hash_partitions)); -- 6.9.2007
+                        END IF;
 
-                                -- 9.10.2003 - create index parallel
-       	                        IF l_parallel_index = 'Y' THEN
-                    IF l_force_ddl_dop IS NULL THEN
+                        -- 9.10.2003 - create index parallel
+       	                IF l_parallel_index = 'Y' THEN
+                    IF l_force_para_dop IS NULL THEN
                         ins_line(l_type,'PARALLEL');
                     ELSE
-                        ins_line(l_type,'PARALLEL '||l_force_ddl_dop);
+                        ins_line(l_type,'PARALLEL '||l_force_para_dop);
                     END IF;
-				ELSE
-					ins_line(l_type,'NOPARALLEL');
-                                END IF;
+						ELSE
+							ins_line(l_type,'NOPARALLEL');
+                        END IF;
 
-       	                        -- 9.10.2003 - create index nologging, then change it to logged noparallel
-               	                IF l_logging = 'N' THEN
-                       	                ins_line(l_type,'NOLOGGING');
-                               	END IF;
-                                ins_line(l_type,'/');
-       	                        ins_line(l_type,'');
+       	                -- 9.10.2003 - create index nologging, then change it to logged noparallel
+               	        IF l_logging = 'N' THEN
+							ins_line(l_type,'NOLOGGING');
+                        END IF;
+                        ins_line(l_type,'/');
+       	                ins_line(l_type,'');
 
-                                IF l_logging = 'N' THEN
-       	                                ins_line(l_type,'ALTER INDEX '||
-					           LOWER(l_schema||l_ind_prefix||p_indexes.indexid||p_recname
+                        IF l_logging = 'N' THEN
+							ins_line(l_type,'ALTER INDEX '||
+							          LOWER(l_schema||l_ind_prefix||p_indexes.indexid||p_recname
                                                    ||p_indexes.name_suffix));
                                         ins_line(l_type,'LOGGING');
        	                                ins_line(l_type,'/');
-               	                END IF;
-                       	        IF l_parallel_index = 'Y' THEN
+               	        END IF;
+                       	IF l_parallel_index = 'Y' THEN
                                	       ins_line(l_type,'ALTER INDEX '||
 					          LOWER(l_schema||l_ind_prefix||p_indexes.indexid||p_recname
                                                   ||p_indexes.name_suffix));
-       	                               ins_line(l_type,'NOPARALLEL');
-               	                       ins_line(l_type,'/');
-                                END IF;
-       	                        ins_line(l_type,'');
-			END LOOP;
-                       	whenever_sqlerror(k_build,FALSE);
-                        IF l_drop_index = 'Y' THEN
+							ins_line(l_type,'NOPARALLEL');
+               	            ins_line(l_type,'/');
+                        END IF;
+       	                ins_line(l_type,'');
+					END LOOP;
+                    whenever_sqlerror(k_build,FALSE);
+                    IF l_drop_index = 'Y' THEN
                                 ins_line(k_build,l_noalterprefix||'DROP INDEX '
 				          ||LOWER(l_schema||'ps'||p_indexes.indexid||p_recname
                                           ||p_indexes.name_suffix)); -- 6.9.2007
-       			ELSE
+					ELSE
                                 ins_line(k_build,'ALTER INDEX '||LOWER(l_schema||'ps'||p_indexes.indexid||p_recname)
                                           ||' RENAME TO old'||LOWER(p_indexes.indexid||p_recname
                                           ||p_indexes.name_suffix));
-                        END IF;
-			ins_line(k_build,'/');
-       			whenever_sqlerror(k_build,TRUE);
-                        ins_line(k_build,l_noalterprefix||'ALTER INDEX ' -- 6.9.2007 
+                    END IF;
+					ins_line(k_build,'/');
+					whenever_sqlerror(k_build,TRUE);
+                    ins_line(k_build,l_noalterprefix||'ALTER INDEX ' -- 6.9.2007 
 	                         ||LOWER(l_schema||'gfc'||p_indexes.indexid||p_recname||p_indexes.name_suffix)
 	                         ||' RENAME TO ps'||LOWER(p_indexes.indexid||p_recname||p_indexes.name_suffix)); 
-			ins_line(k_build,'/');
-                        ins_line(k_build,'');
+					ins_line(k_build,'/');
+                    ins_line(k_build,'');
 -- 30.6.2005-bugfix-do not  drop anything after index only build
 --                      IF l_drop_index = 'Y' THEN
 --                            	whenever_sqlerror(k_index,FALSE);
@@ -3076,10 +3077,10 @@ PROCEDURE mk_arch_indexes(p_type       NUMBER
 
 	                        -- 9.10.2003 - create index parallel
        		                IF l_parallel_index = 'Y' THEN
-                    IF l_force_ddl_dop IS NULL THEN
+                    IF l_force_para_dop IS NULL THEN
                         ins_line(p_type,'PARALLEL');
                     ELSE
-                        ins_line(p_type,'PARALLEL '||l_force_ddl_dop);
+                        ins_line(p_type,'PARALLEL '||l_force_para_dop);
                     END IF;
 				ELSE
 					ins_line(p_type,'NOPARALLEL');
@@ -4602,7 +4603,7 @@ BEGIN
     whenever_sqlerror(k_alter,TRUE);
     forceddldop(k_alter);
     
-    IF p_tables.src_table_name IS NULL THEN -- added 8.6.2010
+    IF p_tables.src_table_name IS NULL THEN -- added 8.6.2010  
       whenever_sqlerror(k_build,FALSE);
       ins_line(k_build,'DROP TABLE '||LOWER(l_schema||'old_'||p_tables.recname)||l_drop_purge_suffix);
       ins_line(k_build,'/');
@@ -4691,10 +4692,10 @@ BEGIN
     ins_line(k_build,'ENABLE ROW MOVEMENT');
 -- 9.10.2003 - create table with parallelism enabled
     IF l_parallel_index = 'Y' THEN
-      IF l_force_ddl_dop IS NULL THEN
+      IF l_force_para_dop IS NULL THEN
         ins_line(k_build,'PARALLEL');
       ELSE
-        ins_line(k_build,'PARALLEL '||l_force_ddl_dop);
+        ins_line(k_build,'PARALLEL '||l_force_para_dop);
       END IF;
     ELSE
       ins_line(k_build,'NOPARALLEL');
@@ -4853,8 +4854,8 @@ BEGIN
     ins_line(k_build,'/');
     ins_line(k_build,'');
     pause_sql(k_build);
---   ins_line(k_build,'ANALYZE TABLE '||LOWER(l_schema||p_tables.table_name)
---                                    ||' ESTIMATE STATISTICS SAMPLE 1 PERCENT;');
+--  ins_line(k_build,'ANALYZE TABLE '||LOWER(l_schema||p_tables.table_name)
+--                                   ||' ESTIMATE STATISTICS SAMPLE 1 PERCENT;');
     signature(k_stats,FALSE,'gfcstats',p_tables.recname);
     IF l_build_stats = 'Y' THEN
       l_counter := 0; -- do build stats command in table build script
@@ -4869,20 +4870,7 @@ BEGIN
           ins_line(l_counter,'sys.dbms_stats.gather_table_stats');
           ins_line(l_counter,'(ownname=>'''||UPPER(l_schema1)||'''');
           ins_line(l_counter,',tabname=>'''||UPPER(p_tables.table_name)||'''');
-          IF l_oraver >= 9 AND l_oraver < 11 THEN /*supress stats size in 11g or higher - use table preferences*/
-            IF p_tables.sample_size IS NULL THEN
-              ins_line(l_counter,',estimate_percent=>DBMS_STATS.AUTO_SAMPLE_SIZE');
-            ELSE
-              ins_line(l_counter,',estimate_percent=>'||p_tables.sample_size); -- 6.9.2007
-            END IF;
-            -- 30.10.2007: added method opt override
-            ins_line(l_counter,',method_opt=>'''||NVL(p_tables.method_opt,'FOR ALL COLUMNS SIZE AUTO')||'''');
---            IF l_parallel_max_servers>1 THEN
---              ins_line(l_counter,',degree=>'||TO_CHAR(l_parallel_max_servers)||'');
---            ELSE
---              ins_line(l_counter,',degree=>DBMS_STATS.DEFAULT_DEGREE');
---            END IF;
-          ELSIF l_oraver < 9 THEN /*Oracle 8i*/
+          IF l_oraver < 9 THEN /*Oracle 8i*/
             IF p_tables.sample_size IS NULL THEN
               ins_line(l_counter,',estimate_percent=>0.1');
             ELSE
@@ -4890,6 +4878,14 @@ BEGIN
             END IF;
             -- 30.10.2007: added method opt override
             ins_line(l_counter,',method_opt=>'''||NVL(p_tables.method_opt,'FOR ALL INDEXED COLUMNS SIZE 1')||'''');
+          ELSIF l_oraver >= 9 AND l_oraver < 11 THEN /*supress stats size in 11g or higher - use table preferences*/
+            IF p_tables.sample_size IS NULL THEN
+              ins_line(l_counter,',estimate_percent=>DBMS_STATS.AUTO_SAMPLE_SIZE');
+            ELSE
+              ins_line(l_counter,',estimate_percent=>'||p_tables.sample_size); -- 6.9.2007
+            END IF;
+            -- 30.10.2007: added method opt override
+            ins_line(l_counter,',method_opt=>'''||NVL(p_tables.method_opt,'FOR ALL COLUMNS SIZE AUTO')||'''');
           END IF;
 
           IF l_block_sample = 'Y' THEN
@@ -4909,6 +4905,12 @@ BEGIN
             END IF;
           END IF;
   
+          IF l_force_para_dop IS NOT NULL THEN --12.7.2021 for all versions
+            ins_line(l_counter,',degree=>'||l_force_para_dop||'');
+--        ELSE
+--          ins_line(l_counter,',degree=>DBMS_STATS.DEFAULT_DEGREE');
+          END IF;
+
           IF l_oraver < 11 THEN /*supress parameter generation in 11g or higher - use table preferences*/
             ins_line(l_counter,',cascade=>TRUE');
           END IF;
@@ -5986,7 +5988,7 @@ BEGIN
   sys.dbms_output.put_line('Rebuild tables with redo logging       : '||l_logging);
   sys.dbms_output.put_line('Enable parallelism for table copy      : '||l_parallel_table);
   sys.dbms_output.put_line('Enable parallel index build            : '||l_parallel_index);
-  sys.dbms_output.put_line('Force Parallel DDL Degree              : '||l_force_ddl_dop);
+  sys.dbms_output.put_line('Force Parallel DDL Degree              : '||l_force_para_dop);
   sys.dbms_output.put_line('Grant privileges to roles              : '||l_roles);
   sys.dbms_output.put_line('Name of update all role                : '||l_update_all);
   sys.dbms_output.put_line('Name of select all role                : '||l_read_all);
@@ -6038,7 +6040,7 @@ PROCEDURE set_defaults
 ,p_logging         VARCHAR2 DEFAULT ''
 ,p_parallel_table  VARCHAR2 DEFAULT ''
 ,p_parallel_index  VARCHAR2 DEFAULT ''
-,p_force_ddl_dop   VARCHAR2 DEFAULT ''
+,p_force_para_dop  VARCHAR2 DEFAULT ''
 ,p_roles           VARCHAR2 DEFAULT ''
 ,p_scriptid        VARCHAR2 DEFAULT ''
 ,p_update_all      VARCHAR2 DEFAULT ''
@@ -6086,8 +6088,8 @@ PROCEDURE set_defaults
 			l_parallel_index := p_parallel_index;
 		END IF;
 
-		IF p_force_ddl_dop IS NOT NULL THEN
-			l_force_ddl_dop := p_force_ddl_dop;
+  IF p_force_para_dop IS NOT NULL THEN
+    l_force_para_dop := p_force_para_dop;
 		END IF;
         
 		IF p_roles IS NOT NULL THEN
@@ -6134,9 +6136,9 @@ PROCEDURE set_defaults
 			l_longtoclob := p_longtoclob;
 		END IF;
 
---		IF p_ddltrigger IS NULL OR p_ddltrigger != '*' THEN
---			l_ddltrigger := p_ddltrigger;
---		END IF;
+--  IF p_ddltrigger IS NULL OR p_ddltrigger != '*' THEN
+--   l_ddltrigger := p_ddltrigger;
+--  END IF;
 
 		IF p_ddlenable IS NOT NULL THEN
 			l_ddlenable := p_ddlenable;
@@ -6150,9 +6152,9 @@ PROCEDURE set_defaults
 			l_drop_purge := p_drop_purge;
 		END IF;
 
---		IF p_noalterprefix IS NOT NULL THEN
---			l_noalterprefix := p_noalterprefix;
---		END IF;
+--IF p_noalterprefix IS NOT NULL THEN
+--  l_noalterprefix := p_noalterprefix;
+--END IF;
 
 		IF p_forcebuild IS NOT NULL THEN
 			l_forcebuild := p_forcebuild;
