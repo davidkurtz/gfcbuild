@@ -4391,24 +4391,26 @@ BEGIN
     AND    pr.part_id = p_part_id
     AND    pr2.part_id = pr.part_id
     AND    pr2.part_no = ( -- next partition that exists
-           SELECT MIN(pr2a.part_no)
+           SELECT /*+QB_NAME(PR2A) UNNEST PUSH_SUBQ*/ 
+                  MIN(pr2a.part_no)
            FROM   gfc_part_ranges pr2a
            ,      dba_tab_partitions tp2
            WHERE  pr2a.part_id = pr.part_id
            AND    pr2a.part_no > pr.part_no
            AND    tp2.table_owner = t.owner
            AND    tp2.table_name = t.table_name
-           AND    tp2.partition_name = p_part_name||'_'||pr2a.part_name
-           )
+           AND    tp2.partition_name = p_part_name||'_'||pr2a.part_name)
     AND NOT EXISTS( -- partition in question exists
-           SELECT 'x'
+           SELECT /*+QB_NAME(PR) UNNEST PUSH_SUBQ*/ 
+                  'x'
            FROM   dba_tab_partitions tp
            WHERE  tp.table_owner = t.owner
            AND    tp.table_name = t.table_name
            AND    tp.partition_name = p_part_name||'_'||pr.part_name
-           )
+           AND    rownum = 1)
     AND EXISTS( -- a subsequent partition exists-this might be tortology
-           SELECT 'x'
+           SELECT /*+QB_NAME(PR1) UNNEST PUSH_SUBQ*/ 
+                  'x'
            FROM   gfc_part_ranges pr1
            ,      dba_tab_partitions tp1
            WHERE  pr1.part_id = pr.part_id
@@ -4416,7 +4418,7 @@ BEGIN
            AND    tp1.table_owner = t.owner
            AND    tp1.table_name = t.table_name
            AND    tp1.partition_name = p_part_name||'_'||pr1.part_name
-           )
+           AND    rownum = 1)
     AND    NOT (   l_repopnewmax = 'Y' 
                AND UPPER(pr2.part_value) LIKE '%MAXVALUE%'
 --             AND p_subpart_type = 'N' /*31.7.2017 do not check subpartitioning*/
@@ -4870,6 +4872,7 @@ BEGIN
           ins_line(l_counter,'sys.dbms_stats.gather_table_stats');
           ins_line(l_counter,'(ownname=>'''||UPPER(l_schema1)||'''');
           ins_line(l_counter,',tabname=>'''||UPPER(p_tables.table_name)||'''');
+          ---------- sample size ----------
           IF l_oraver < 9 THEN /*Oracle 8i*/
             IF p_tables.sample_size IS NULL THEN
               ins_line(l_counter,',estimate_percent=>0.1');
@@ -4887,11 +4890,11 @@ BEGIN
             -- 30.10.2007: added method opt override
             ins_line(l_counter,',method_opt=>'''||NVL(p_tables.method_opt,'FOR ALL COLUMNS SIZE AUTO')||'''');
           END IF;
-
+          ---------- block sample ----------
           IF l_block_sample = 'Y' THEN
             ins_line(l_counter,',block_sample=>TRUE'); 
           END IF;
-
+          ---------- granularity ----------
           IF l_oraver >= 11 THEN /*supress parameter generation in 11g or higher - use table preferences*/
             NULL;
           ELSIF l_oraver >= 10 THEN 
@@ -4904,17 +4907,21 @@ BEGIN
               ins_line(l_counter,',granularity=>''ALL'''); 
             END IF;
           END IF;
-  
+          ---------- degree ----------
           IF l_force_para_dop IS NOT NULL THEN --12.7.2021 for all versions
             ins_line(l_counter,',degree=>'||l_force_para_dop||'');
 --        ELSE
 --          ins_line(l_counter,',degree=>DBMS_STATS.DEFAULT_DEGREE');
           END IF;
-
+          ---------- cascade ----------
           IF l_oraver < 11 THEN /*supress parameter generation in 11g or higher - use table preferences*/
             ins_line(l_counter,',cascade=>TRUE');
           END IF;
-
+          ---------- force ----------
+          IF l_oraver >= 11 THEN /*override locked stats*/
+            ins_line(l_counter,',force=>TRUE');
+          END IF;
+          ---------- end ----------
           ins_line(l_counter,');');
           ins_line(l_counter,'END;');
           ins_line(l_counter,'/');

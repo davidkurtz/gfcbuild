@@ -3,7 +3,7 @@ rem (c) Go-Faster Consultancy
 
 spool gfcbuildpkg
 
-set serveroutput on buffer 1000000000 verify on feedback on lines 120 timing off autotrace off pause off echo off termout on
+set serveroutput on verify on feedback on lines 120 timing off autotrace off pause off echo off termout on
 
 @@psownerid
 
