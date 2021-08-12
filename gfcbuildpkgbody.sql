@@ -1328,7 +1328,8 @@ PROCEDURE signature(p_type    NUMBER
             dbms_application_info.read_module(module_name=>l_module, action_name=>l_action);
             set_action(p_action_name=>'SIGNATURE');
 
-            ins_line(p_type,'set echo on pause off verify on feedback on timi on autotrace off pause off lines '||k_max_line_length||' sqlblanklines on');
+            ins_line(p_type,'set echo on pause off verify on feedback on timi on autotrace off pause off lines '
+                            ||k_max_line_length||' sqlblanklines on serveroutput on');
             IF p_recname IS NULL THEN
                 ins_line(p_type,LOWER('spool '||p_spool||'_'||l_dbname||'.lst'));
             ELSE
@@ -4764,6 +4765,7 @@ BEGIN
       ELSE
         ins_line(k_build,'FROM '||LOWER(l_schema||p_tables.src_table_name)||' s;');
       END IF;
+      ins_line(k_build,'dbms_output.put_line(TO_CHAR(SQL%ROWCOUNT)||'' rows inserted.'');');
       ins_line(k_build,'COMMIT;');
       ins_line(k_build,'END;');
       ins_line(k_build,'/'); 
@@ -4804,6 +4806,7 @@ BEGIN
       ELSE
         ins_line(k_build,'FROM '||LOWER(l_schema||p_tables.ora_table_name||' s;'));
       END IF;
+      ins_line(k_build,'dbms_output.put_line(TO_CHAR(SQL%ROWCOUNT)||'' rows inserted.'');');
       ins_line(k_build,'COMMIT;');
       ins_line(k_build,'END;');
       ins_line(k_build,'/');
@@ -5021,6 +5024,7 @@ BEGIN
       ELSE
         ins_line(k_alter,'FROM '||LOWER(l_schema||p_tables.src_table_name)||' s;');
       END IF;
+      ins_line(k_build,'dbms_output.put_line(TO_CHAR(SQL%ROWCOUNT)||'' rows inserted.'');');
       ins_line(k_alter,'COMMIT;');
       ins_line(k_alter,'END;');
       ins_line(k_alter,'/');

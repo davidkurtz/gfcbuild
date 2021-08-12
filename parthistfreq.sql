@@ -20,7 +20,6 @@ select r.recname
 from   psrecdefn r
   LEFT OUTER JOIN ps_led_tmplt_tbl t
   ON   r.recname = t.recname
---AND NOT t.ledger_template IN('TST','BUDGET_DLJ')
 WHERE  r.rectype = 0
 and    (  r.recname IN('LEDGER','LEDGER_BUDG')
        OR t.ledger_type = 'S')

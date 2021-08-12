@@ -1,3 +1,6 @@
+REM partdata.sql
+rem (c) Go-Faster Consultancy 2001-21
+-----------------------------------------------------------------------------------------------------------
 WHENEVER SQLERROR CONTINUE
 spool partdata0
 EXECUTE gfc_pspart.truncate_tables(p_all=>TRUE);
@@ -15,12 +18,14 @@ execute gfc_pspart.set_defaults(p_update_all=>'SYSADM_READWRITE');
 execute gfc_pspart.set_defaults(p_roles => 'Y');
 execute gfc_pspart.set_defaults(p_ddlenable  => 'BEGIN psft_ddl_lock.set_ddl_permitted(TRUE); END;'||CHR(10)||'/');
 execute gfc_pspart.set_defaults(p_ddldisable => 'BEGIN psft_ddl_lock.set_ddl_permitted(FALSE); END;'||CHR(10)||'/');
---execute gfc_pspart.set_defaults(p_force_ddl_dop => '40'); 
 execute gfc_pspart.set_defaults(p_drop_purge => 'Y');
 execute gfc_pspart.set_defaults(p_desc_index => 'N');
 execute gfc_pspart.set_defaults(p_drop_index => 'N');
 execute gfc_pspart.set_defaults(p_parallel_table => 'Y');
+execute gfc_pspart.set_defaults(p_parallel_index => 'Y');
+execute gfc_pspart.set_defaults(p_force_para_dop => '48'); 
 execute gfc_pspart.set_defaults(p_block_sample => 'N');
+execute gfc_pspart.set_defaults(p_longtoclob => 'Y');
 execute gfc_pspart.display_defaults;
 --------------------------------------------------------------------------------------------------------------
 --------------------------------------------------------------------------------------------------------------
