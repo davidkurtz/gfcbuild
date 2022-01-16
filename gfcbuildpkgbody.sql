@@ -2734,6 +2734,7 @@ BEGIN
     FOR p_indexes IN(
        	SELECT   g.indexid, g.uniqueflag, g.platform_ora
 		,        p.RECNAME
+		,        DECODE(r.sqltablename,' ','PS_'||r.recname,r.sqltablename) table_name --16.1.2022 added table name to cater for PeopleTools tables
 	    ,        NVL(i.part_id,p.part_id) part_id
 	    ,        NVL(i.part_type,p.part_type) part_type
 	    ,        NVL(i.part_column,p.part_column) part_column
@@ -2759,9 +2760,11 @@ BEGIN
 			         ON i.recname = g.recname
 			         AND i.indexid = g.indexid
                 	,        gfc_part_tables p
+					,        psrecdefn r
 	                WHERE    p.recname = g.recname
 					AND      g.recname = p_recname
                 	AND      p.recname = p_recname
+					AND      r.recname = p_recname
 					AND      g.platform_ora = 1
 					AND      NOT (p.organization = 'I' AND g.indexid = '_') 
 					ORDER BY g.indexid)
@@ -2794,7 +2797,7 @@ BEGIN
 						END IF;
 						l_ind_def := l_ind_def||' INDEX '||
 								LOWER(l_schema||l_ind_prefix||p_indexes.indexid||p_recname||p_indexes.name_suffix)||
-                                ' ON '||LOWER(l_schema||l_ind_prefix||'_'||p_recname);
+                                ' ON '||LOWER(l_schema||p_indexes.table_name);  --16.1.2022 correct table name for PeopleTools tables
 						ins_line(l_type,l_ind_def);
 						ind_cols(l_type,p_recname,p_indexes.indexid,l_desc_index);
 						IF p_indexes.ind_part_type = 'L' THEN -- local partitioning
@@ -2968,31 +2971,31 @@ PROCEDURE mk_arch_indexes(p_type       NUMBER
                 FOR p_indexes IN(
                 	SELECT   g.indexid, g.uniqueflag, g.platform_ora
 	                ,        p.RECNAME
-	                ,        NVL(i.part_id,p.part_id) part_id
+					,        NVL(i.part_id,p.part_id) part_id
 	                ,        NVL(i.part_type,p.part_type) part_type
 	                ,        NVL(i.part_column,p.part_column) part_column
 	                ,        NVL(i.subpart_type,p.subpart_type) subpart_type
 	                ,        NVL(i.subpart_column,p.subpart_column) subpart_column 
-			,        NVL(i.hash_partitions,p.hash_partitions) hash_partitions
-			, 	 NVL(i.idx_tablespace,p.idx_tablespace) idx_tablespace
+					,        NVL(i.hash_partitions,p.hash_partitions) hash_partitions
+					, 	     NVL(i.idx_tablespace,p.idx_tablespace) idx_tablespace
 	                ,        NVL(i.idx_storage,p.idx_storage) idx_storage
 	                ,        NVL(i.override_schema,p.override_schema) override_schema
-			,        CASE WHEN i.indexid IS NULL OR i.part_type = 'L' THEN 'L'
- 			              ELSE 'G'
-			         END AS ind_part_type
-			,        i.name_suffix
+					,        CASE WHEN i.indexid IS NULL OR i.part_type = 'L' THEN 'L'
+ 			                      ELSE 'G'
+			                      END AS ind_part_type
+					,        i.name_suffix
         	        FROM     gfc_ps_indexdefn g -- 6.9.2007 removed psindexdefn
 			         LEFT OUTER JOIN gfc_part_indexes i
 			         ON i.recname = g.recname
 			         AND i.indexid = g.indexid
                 	,        gfc_part_tables p
 	                WHERE    p.recname = g.recname
-			AND      g.recname = p_recname
+					AND      g.recname = p_recname
                 	AND      p.recname = p_recname
-			AND      g.platform_ora = 1
-			AND      NOT (p.organization = 'I' AND g.indexid = '_') 
-			AND 	 (i.part_type = 'L' OR i.part_type IS NULL OR g.uniqueflag = 1)
-			ORDER BY g.indexid)
+					AND      g.platform_ora = 1
+					AND      NOT (p.organization = 'I' AND g.indexid = '_') 
+					AND 	 (i.part_type = 'L' OR i.part_type IS NULL OR g.uniqueflag = 1)
+					ORDER BY g.indexid)
                 LOOP
 			debug_msg('p_indexes:indexid='||p_indexes.indexid
 				||'/part_type='||p_indexes.part_type
