@@ -15,7 +15,7 @@
 --------------------------------------------------------------------------------------
 -- HISTORY BLOCK MOVED TO PACKAGE HEADER SO IT CAN BE SEEN IN PACAKGE SOURCE
 --------------------------------------------------------------------------------------
-set echo on
+set echo on pages 999
 spool gfc_partdata_pkg
 --------------------------------------------------------------------------------------------------------------
 
@@ -37,10 +37,10 @@ CREATE OR REPLACE PACKAGE &&ownerid..gfc_partdata AS
 --procedure to populate audit data
 --------------------------------------------------------------------------------------------------------------
 PROCEDURE partdata;        --head procedure that calls others
-PROCEDURE gl_partdata;     --GL meta data
-PROCEDURE gtt_data;        --Global Temporary Tables
-PROCEDURE index_comp;  --set index compression in PeopleTools tables   
-PROCEDURE comp_attrib; --procedure to apply compression attributes to existing tables
+--PROCEDURE gl_partdata;     --GL meta data
+--PROCEDURE gtt_data;        --Global Temporary Tables
+PROCEDURE index_comp;      --set index compression in PeopleTools tables   
+PROCEDURE comp_attrib;     --procedure to apply compression attributes to existing tables
 --------------------------------------------------------------------------------------------------------------
 END gfc_partdata;
 /
@@ -53,13 +53,13 @@ CREATE OR REPLACE PACKAGE BODY gfc_partdata AS
 --------------------------------------------------------------------------------------------------------------
 --Constants used in the meta data that may need to be changed over time as partitions are added/archived/purged
 --------------------------------------------------------------------------------------------------------------
-k_gl_first_year           CONSTANT INTEGER := 2014; --This is the first fiscal year 
-k_gl_first_monthly_year   CONSTANT INTEGER := 2020; --This is the first fiscal year with monthly partitions
-k_gl_last_year            CONSTANT INTEGER := 2022; --This is the last fiscal year 
+k_gl_first_year           CONSTANT INTEGER := 2017; --This is the first fiscal year 
+k_gl_first_monthly_year   CONSTANT INTEGER := 2017; --This is the first fiscal year with monthly partitions
+k_gl_last_year            CONSTANT INTEGER := 2023; --This is the last fiscal year with monthly partitions
 --------------------------------------------------------------------------------------------------------------
-k_glb_first_year          CONSTANT INTEGER := 2014; --This is the first fiscal year 
-k_glb_first_monthly_year  CONSTANT INTEGER := 2020; --This is the first fiscal year with monthly partitions
-k_glb_last_year           CONSTANT INTEGER := 2022; --This is the last fiscal year 
+k_glb_first_year           CONSTANT INTEGER := 2017; --This is the first fiscal year 
+k_glb_last_year            CONSTANT INTEGER := 2023; --This is the last fiscal year with monthly partitions
+k_glb_first_month          CONSTANT INTEGER := 0;    --This is the first month in the first year
 --------------------------------------------------------------------------------------------------------------
 --------------------------------------------------------------------------------------------------------------
 --Other constants that should not be changed
@@ -93,8 +93,8 @@ PROCEDURE del_partdata
 (p_part_id VARCHAR2)
 IS
   k_action CONSTANT VARCHAR2(64) := 'DEL_PARTDATA';
-  l_module VARCHAR2(64);
-  l_action VARCHAR2(64);
+  l_module v$session.module%TYPE;
+  l_action v$session.action%TYPE;
   l_num_rows INTEGER; --variable to hold number of rows processed
 BEGIN
   dbms_application_info.read_module(module_name=>l_module, action_name=>l_action);
@@ -140,9 +140,11 @@ END del_partdata;
 --------------------------------------------------------------------------------------------------------------
 PROCEDURE gl_partdata IS
   k_action CONSTANT VARCHAR2(64) := 'GL_PARTDATA';
-  l_module VARCHAR2(64);
-  l_action VARCHAR2(64);
+  l_module v$session.module%TYPE;
+  l_action v$session.action%TYPE;
   l_num_rows INTEGER; --variable to hold number of rows processed
+
+  l_compdate DATE := TRUNC(ADD_MONTHS(SYSDATE,-2),'MM'); 
 BEGIN
   dbms_application_info.read_module(module_name=>l_module, action_name=>l_action);
   dbms_application_info.set_module(module_name=>k_module, action_name=>k_action);
@@ -206,6 +208,9 @@ BEGIN
   msg(TO_CHAR(SQL%ROWCOUNT)||' rows inserted.');
 
 
+--------------------------------------------------------------------------------------------------------------
+-- Partition Ranges
+--------------------------------------------------------------------------------------------------------------
   msg('Populating GL Range Partitions');
   INSERT INTO gfc_part_ranges (part_id, part_no, part_name, part_value, tab_storage, idx_storage)
   SELECT 	'GL' part_id
@@ -223,16 +228,16 @@ BEGIN
   ,     y.y+p.part_no/100 part_no
   , 	LTRIM(TO_CHAR(y.y,'0000'))||'_'||p.part_name part_name
   ,	LTRIM(TO_CHAR(y.y+p.y))||','||p.part_value part_value
-  ,	CASE WHEN TO_CHAR(y.y+p.y+p.part_value/100,'0000.00') < TO_NUMBER(TO_CHAR(sysdate,'YYYY'))+TO_NUMBER(TO_CHAR(SYSDATE,'MM'))/100
+  ,	CASE WHEN TO_CHAR(y.y+p.y+p.part_value/100,'0000.00') < TO_NUMBER(TO_CHAR(l_compdate,'YYYY'))+TO_NUMBER(TO_CHAR(l_compdate,'MM'))/100
 	     THEN 'PCTFREE 0 COMPRESS'
         END 
-  ,	CASE WHEN TO_CHAR(y.y+p.y+p.part_value/100,'0000.00') < TO_NUMBER(TO_CHAR(sysdate,'YYYY'))+TO_NUMBER(TO_CHAR(SYSDATE,'MM'))/100
+  ,	CASE WHEN TO_CHAR(y.y+p.y+p.part_value/100,'0000.00') < TO_NUMBER(TO_CHAR(l_compdate,'YYYY'))+TO_NUMBER(TO_CHAR(l_compdate,'MM'))/100
 	     THEN 'PCTFREE 0'
         END 
   FROM	(
 	SELECT  k_gl_first_monthly_year+rownum-1 y --monthly partitioned data starts in 2012
 	FROM	dual
-	CONNECT BY level <= k_gl_last_year-k_gl_first_monthly_year+1 --2 years of monthly partitioned data
+	CONNECT BY level <= k_gl_last_year-k_gl_first_monthly_year+1 --years of monthly partitioned data
 	) y
   ,	(
 	SELECT	rownum part_no
@@ -251,6 +256,8 @@ BEGIN
 	FROM	dual
 	) p;
   msg(TO_CHAR(SQL%ROWCOUNT)||' rows inserted.');
+
+--------------------------------------------------------------------------------------------------------------
 
   msg('Populating GL Budget Range Partitions');
   INSERT INTO gfc_part_ranges (part_id, part_no, part_name, part_value, tab_storage, idx_storage)
@@ -281,6 +288,9 @@ BEGIN
   WHERE p.part_no>=k_glb_first_month OR y.y>k_glb_first_year;
   msg(TO_CHAR(SQL%ROWCOUNT)||' rows inserted.');
 
+-----------------------------------------------------------------------------------------------------------
+--list sub-partitions
+-----------------------------------------------------------------------------------------------------------
   msg('Populating GL List Partitions');
   l_num_rows := 0;
   INSERT INTO gfc_part_lists (part_id, part_no, part_name, list_value) VALUES('GL',1,'ACT_USD','''ACT_USD''');
@@ -329,8 +339,8 @@ END gl_partdata;
 --------------------------------------------------------------------------------------------------------------
 PROCEDURE gtt_data IS
   k_action CONSTANT VARCHAR2(64) := 'GTT_DATA';
-  l_module VARCHAR2(64);
-  l_action VARCHAR2(64);
+  l_module v$session.module%TYPE;
+  l_action v$session.action%TYPE;
   l_num_rows INTEGER; --variable to hold number of rows processed
 BEGIN
   dbms_application_info.read_module(module_name=>l_module, action_name=>l_action);
@@ -357,9 +367,16 @@ FROM    psrecdefn r
     ON r.recname = a.recname 
 WHERE   r.rectype = '7'
 AND     NVL(a.ae_disable_restart,'Y') = 'Y' /*restart is enabled*/
-AND     a.ae_applid IN('FS_CEBD_PROC','FS_CEBD_STAO','FS_CEDT_ECFS','FS_CEDT_PROC'
-                      ,'GL_JEDIT','GL_JEDIT2','GL_JEDIT_0','GL_JEDIT_CF0'
-                      ,'GL_JEVAT_1','GL_JIUNIT','GL_JRNL_COPY','GL_JRNL_IMP')
+AND     r.recname IN( 
+   /*rectype=7*/ 'ALC_AMT_G', 'ALC_BASF_G', 'ALC_BASV_G', 'ALC_BASX_G', 'ALC_BULED_G', 'ALC_BU_G', 'ALC_CLOG_G', 'ALC_GL_BS_G', 'ALC_GL_B_G', 'ALC_GL_OS_G', 
+   'ALC_GL_O_G', 'ALC_GL_P_G', 'ALC_GL_TB_G', 'ALC_GL_TS_G', 'ALC_GL_TX_G', 'ALC_GL_T_G', 'ALC_GRSTP_G', 'ALC_JHDR_G', 'ALC_OFFV_G', 'ALC_PC_BS_G', 'ALC_PC_B_G', 
+   'ALC_PC_P_G', 'ALC_PC_TB_G', 'ALC_PC_TS_G', 'ALC_PC_T_G', 'ALC_POOLF_G', 'ALC_POOLV_G', 'ALC_POOLX_G', 'ALC_RNDLN_G', 'ALC_STEP_G', 'ALC_TARGV_G', 'BKC_ALL_G', 
+   'BKC_CLSE_G', 'BKC_OPEN_G', 'BUGRP_G', 'CFVSET_G', 'CFV_SEL_G', 'CFV_SET_G', 'CF_G', 'CLO_ACCT_G', 'CLO_BALGR_G', 'CLO_JHDR_G', 'CLO_JLN2_G', 'CLO_JLN_G', 
+   'CLO_LED2_G', 'CLO_LED_G', 'CLO_RE_G', 'COMB_EXP_G', 'COMB_S30_G', 'FS_CE_CFS_G', 'FS_CE_CFV_G', 'FS_GRRULE_G', 'FT_BUGRP_G', 
+   'FT_BU_G', 'GLJ_DOCS_G', 'GLJ_POSA_G', 'JED_ADJS_G', 'JED_BA2_G', 'JED_BAL_G', 'JED_JHD2_G', 'JED_JHDR_G', 'JED_JL2_G', 'JED_JLN_G', 'JED_SVT_G', 'JED_VAT_G', 
+   'JHDR_SEL_G', 'JP_BULD_G', 'JP_JH_G', 'JP_JL_G', 'JP_PTB1_G', 'JP_PTB2_G', 'JP_PTB_G', 'JRN_HIU_G', 'JRN_IUW2_G', 'JRN_IUW3_G', 'JRN_IUW4_G', 'JRN_IUW5_G', 
+   'JRN_IUWK_G', 'JRN_LIU_G', 'LOADER_BU_G', 'MC_ACCT_G', 'MC_LEDGER_G', 'MC_RATE_G', 'MC_SUBTYP_G', 'MC_TSEL_G', 'MC_WRK1_G', 'MC_WRK_G', 'RTBL_JLN_G', 
+   'RTB_PST1_G', 'RTB_PST2_G', 'RTB_PST_G', 'TSEL_B_G', 'TSEL_P_G', 'TSEL_R30_G', 'TSE_JLNE_G')
 MINUS
 SELECT recname 
 FROM gfc_temp_tables
@@ -379,8 +396,8 @@ END gtt_data;
 --------------------------------------------------------------------------------------------------------------
 PROCEDURE wl_partdata IS
   k_action CONSTANT VARCHAR2(64) := 'WL_PARTDATA';
-  l_module VARCHAR2(64);
-  l_action VARCHAR2(64);
+  l_module v$session.module%TYPE;
+  l_action v$session.action%TYPE;
   l_num_rows INTEGER; --variable to hold number of rows processed
 BEGIN
   dbms_application_info.read_module(module_name=>l_module, action_name=>l_action);
@@ -433,7 +450,8 @@ BEGIN
 
   l_num_rows := 0;
   msg('Populating WL Range Partitions');
-  INSERT INTO gfc_part_ranges (part_id, part_no, part_name, part_value) VALUES('WL',2,'SELECT_OPEN' ,'''2''');
+  INSERT INTO gfc_part_ranges (part_id, part_no, part_name, part_value) 
+  VALUES('WL',2,'SELECT_OPEN' ,'''2''');
   l_num_rows := l_num_rows +SQL%ROWCOUNT;
   INSERT INTO gfc_part_ranges (part_id, part_no, part_name, part_value, tab_storage, idx_storage) 
   VALUES('WL',9,'WORKED_CANC','MAXVALUE','PCTFREE 1 PCTUSED 90','PCTFREE 1');
@@ -455,18 +473,18 @@ BEGIN
 
   msg(TO_CHAR(SQL%ROWCOUNT)||' rows inserted.');
 -----------------------------------------------------------------------------------------------------------
---End GL Metadata
+--End WL Metadata
 -----------------------------------------------------------------------------------------------------------
   commit;
-  msg('GL metadata load complete');
+  msg('WL metadata load complete');
   dbms_application_info.set_module(module_name=>l_module, action_name=>l_action);
 END wl_partdata;
 --------------------------------------------------------------------------------------------------------------
 -----------------------------------------------------------------------------------------------------------
 PROCEDURE index_comp IS
   k_action CONSTANT VARCHAR2(64) := 'INDEX_COMP';
-  l_module VARCHAR2(64);
-  l_action VARCHAR2(64);
+  l_module v$session.module%TYPE;
+  l_action v$session.action%TYPE;
 BEGIN
   dbms_application_info.read_module(module_name=>l_module, action_name=>l_action);
   dbms_application_info.set_module(module_name=>k_module, action_name=>k_action);
@@ -480,10 +498,10 @@ BEGIN
   set    version = (SELECT version FROM psversion WHERE objecttypename = 'RDM')
   ,      lastupddttm = SYSDATE
   ,      lastupdoprid = k_module
-  where  recname IN('LEDGER','LEDGER_BUDG','S_FT_ACCTDET','S_FT_CICA_SUML','S_FT_USEXP','S_FT_USGEO','S_FT_USIRP','S_FT_USSTAT','S_LEDGER_ACCTS','S_LRG_ACT_CA');
+  where  recname IN('LEDGER','LEDGER_BUDG');
   
   delete from psidxddlparm p
-  where  recname IN('LEDGER','LEDGER_BUDG','S_FT_ACCTDET','S_FT_CICA_SUML','S_FT_USEXP','S_FT_USGEO','S_FT_USIRP','S_FT_USSTAT','S_LEDGER_ACCTS','S_LRG_ACT_CA')
+  where  recname IN('LEDGER','LEDGER_BUDG')
   and    parmname IN('PCTFREE','INIT','NEXT');
   
   insert into psidxddlparm
@@ -509,86 +527,12 @@ BEGIN
   where recname = 'LEDGER_BUDG'
   and   platform_ora = 1 ;
  
-  insert into psidxddlparm
-  select recname, indexid, 2, 0, 'PCTFREE', '5'||CASE indexid 
-    WHEN '_' THEN ' COMPRESS 6'
-  END
-  from  psindexdefn
-  where recname = 'S_FT_ACCTDET'
-  and   platform_ora = 1 ;
-
-  insert into psidxddlparm
-  select recname, indexid, 2, 0, 'PCTFREE', '5'||CASE indexid 
-    WHEN '_' THEN ' COMPRESS 7'
-  END
-  from  psindexdefn
-  where recname = 'S_FT_CICA_SUML'
-  and   platform_ora = 1 ;
-
-  insert into psidxddlparm
-  select recname, indexid, 2, 0, 'PCTFREE', '5'||CASE indexid 
-    WHEN '_' THEN ' COMPRESS 3'
-  END
-  from  psindexdefn
-  where recname = 'S_FT_USEXP'
-  and   platform_ora = 1 ;
-
-  insert into psidxddlparm
-  select recname, indexid, 2, 0, 'PCTFREE', '5'||CASE indexid 
-    WHEN 'C' THEN ' COMPRESS 4'
-    WHEN '_' THEN ' COMPRESS 3'
-  END
-  from  psindexdefn
-  where recname = 'S_FT_USGEO'
-  and   platform_ora = 1 ;
-
-  insert into psidxddlparm
-  select recname, indexid, 2, 0, 'PCTFREE', '5'||CASE indexid 
-    WHEN '_' THEN ' COMPRESS 3'
-  END
-  from  psindexdefn
-  where recname = 'S_FT_USIRP'
-  and   platform_ora = 1 ;
-
-  insert into psidxddlparm
-  select recname, indexid, 2, 0, 'PCTFREE', '5'||CASE indexid 
-    WHEN 'C' THEN ' COMPRESS 6'
-    WHEN '_' THEN ' COMPRESS 4'
-  END
-  from  psindexdefn
-  where recname = 'S_FT_USSTAT'
-  and   platform_ora = 1 ;
-
-  insert into psidxddlparm
-  select recname, indexid, 2, 0, 'PCTFREE', '5'||CASE indexid 
-    WHEN '_' THEN ' COMPRESS 5'
-  END
-  from  psindexdefn
-  where recname = 'S_LEDGER_ACCTS'
-  and   platform_ora = 1 ;
-
-  insert into psidxddlparm
-  select recname, indexid, 2, 0, 'PCTFREE', '5'||CASE indexid 
-    WHEN 'A' THEN ' COMPRESS 4'
-    WHEN 'B' THEN ' COMPRESS 6'
-    WHEN '_' THEN ' COMPRESS 7'
-  END
-  from  psindexdefn
-  where recname = 'S_LRG_ACT_CA'
-  and   platform_ora = 1 ;
-
-  update psindexdefn i
-  set    platform_ora = 0
-  where  recname IN('LEDGER','LEDGER_BUDG','S_FT_ACCTDET','S_FT_CICA_SUML','S_FT_USEXP','S_FT_USGEO','S_FT_USIRP','S_FT_USSTAT','S_LEDGER_ACCTS','S_LRG_ACT_CA')
-  and    platform_ora = 1
-  and    indexid != '_';
-
   update psindexdefn i
   set    ddlcount = (SELECT COUNT(DISTINCT platformid) 
                      FROM   psidxddlparm d
                      WHERE  d.recname = i.recname
                      AND    d.indexid = i.indexid)
-  where recname IN('LEDGER','LEDGER_BUDG','S_FT_ACCTDET','S_FT_CICA_SUML','S_FT_USEXP','S_FT_USGEO','S_FT_USIRP','S_FT_USSTAT','S_LEDGER_ACCTS','S_LRG_ACT_CA');
+  where recname IN('LEDGER','LEDGER_BUDG');
 
   commit;
 
@@ -631,7 +575,7 @@ BEGIN
   truncmeta;
   gl_partdata;
 
-  msg('Checking Compression Attributes -v- Metadta');
+  msg('Checking Compression Attributes -v- Metadata');
   FOR i IN ( --table level compression where all the partitions are the same
 with tp as (
 SELECT table_name, compression, compress_for
@@ -643,7 +587,7 @@ select tp.*, count(*) over (partition by table_name) compression_types
 from tp
 ), x as (
 select pt.part_id, pt.part_type, t.table_name
-,      regexp_substr(pt.tab_storage,'(COMPRESS|NOCOMPRESS)[ [:alnum:]]+',1,1,'i') tab_storage
+,      regexp_substr(pt.tab_storage,'(COMPRESS|NOCOMPRESS)[ [:alnum:]]*',1,1,'i') tab_storage
 ,      t.compression, t.compress_for
 FROM   psrecdefn r
 INNER JOIN t
@@ -673,8 +617,8 @@ ORDER BY 1,2,3,4
   FOR i IN ( --partition level compression settings
 with x as (
 select pt.part_id, pt.part_type, t.table_name, pr.part_name, tp.partition_name
-,      COALESCE(regexp_substr(pr.tab_storage,'(COMPRESS|NOCOMPRESS)[ [:alnum:]]+',1,1,'i')
-               ,regexp_substr(pt.tab_storage,'(COMPRESS|NOCOMPRESS)[ [:alnum:]]+',1,1,'i')
+,      COALESCE(regexp_substr(pr.tab_storage,'(COMPRESS|NOCOMPRESS)[ [:alnum:]]*',1,1,'i')
+               ,regexp_substr(pt.tab_storage,'(COMPRESS|NOCOMPRESS)[ [:alnum:]]*',1,1,'i')
                )  tab_storage
 ,      COALESCE(tp.compression, t.compression) compression
 ,      COALESCE(tp.compress_for, t.compress_for) compress_for
@@ -715,9 +659,9 @@ END comp_attrib;
 --procedure to call all other partdata procedures
 --------------------------------------------------------------------------------------------------------------
 PROCEDURE partdata IS
-  k_action CONSTANT VARCHAR2(48) := 'PARTDATA';
-  l_module VARCHAR2(48);
-  l_action VARCHAR2(32);
+  k_action CONSTANT VARCHAR2(64) := 'PARTDATA';
+  l_module v$session.module%TYPE;
+  l_action v$session.action%TYPE;
 BEGIN
   dbms_application_info.read_module(module_name=>l_module, action_name=>l_action);
   dbms_application_info.set_module(module_name=>k_module, action_name=>k_action);
@@ -763,4 +707,3 @@ EXECUTE gfc_partdata.partdata;
 EXECUTE gfc_partdata.comp_attrib;
 
 spool off
-
