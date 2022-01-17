@@ -220,6 +220,7 @@ BEGIN
   sys.dbms_output.put_line('26.11.2020 - Support for partial indexing');
   sys.dbms_output.put_line('13.05.2021 - Permit same sub-partitioning type with different PART_ID');
   sys.dbms_output.put_line('08.07.2021 - Add Session parallel force DDL for parallel index creation with automatic parallelism');
+  sys.dbms_output.put_line('16.01.2022 - Correct table name in index commands to use custom table names');
   dbms_application_info.set_module(module_name=>l_module, action_name=>l_action);
 END history;
 

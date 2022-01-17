@@ -1,5 +1,5 @@
 rem gfcbuildone.sql
-rem (c) Go-Faster Consultancy 2001-22
+rem (c) Go-Faster Consultancy 2001-21
 clear screen
 
 spool gfcbuild
@@ -7,6 +7,7 @@ set echo on termout on serveroutput on
 
 --only necessary if meta data has changed
 
+execute gfc_pspart.truncate_tables(p_all=>FALSE);
 /**/
 execute gfc_pspart.truncate_tables(p_all=>TRUE);
 set termout off 
@@ -20,9 +21,11 @@ execute gfc_pspart.truncate_tables;
 execute gfc_pspart.set_defaults(p_debug_level => 0);
 execute gfc_pspart.display_defaults;
 
-exec gfc_pspart.main
-
-
+begin
+  gfc_pspart.main(p_rectype=>'P', p_recname=>'PSPMTRANSARCH');
+  gfc_pspart.main(p_rectype=>'P', p_recname=>'PSPMEVENTARCH');
+end;
+/
 
 
 --pause
