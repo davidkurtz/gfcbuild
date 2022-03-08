@@ -19,12 +19,13 @@
 --------------------------------------------------------------------------------------
 spool gfcbuildpriv
 set echo on
-@@ownerid
+--@@psownerid
 --------------------------------------------------------------------------------------
 GRANT CREATE ANY CONTEXT TO &&ownerid;
 
 GRANT SELECT ON ps.psdbowner TO &&ownerid;
 
+GRANT SELECT ON sys.v_$database TO &&ownerid;
 GRANT SELECT ON sys.v_$session TO &&ownerid;
 GRANT SELECT ON sys.v_$parameter TO &&ownerid;
 GRANT SELECT ON sys.v_$version TO &&ownerid;

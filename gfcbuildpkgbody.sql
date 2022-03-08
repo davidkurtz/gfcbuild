@@ -1889,7 +1889,7 @@ PROCEDURE tab_rangesubparts(p_type NUMBER, p_recname VARCHAR2
                                ,p_part_id VARCHAR2, p_part_name VARCHAR2
                                ,p_part_basename VARCHAR2
                                ,p_arch_flag VARCHAR2 DEFAULT 'N') IS -- 19.3.2010 added subpart
-            l_part_def VARCHAR2(400 CHAR);
+            l_part_def CLOB;
             l_counter INTEGER := 0;
             l_module v$session.module%type;
             l_action v$session.action%type;
@@ -1967,7 +1967,7 @@ PROCEDURE tab_listsubparts(p_type NUMBER, p_recname VARCHAR2
                                ,p_part_id VARCHAR2, p_part_name VARCHAR2
                                ,p_part_basename VARCHAR2
                                ,p_arch_flag VARCHAR2 DEFAULT 'N') IS -- 19.3.2010 added subpart
-            l_part_def VARCHAR2(400 CHAR);
+            l_part_def CLOB;
             l_counter INTEGER := 0;
             l_module v$session.module%type;
             l_action v$session.action%type;
@@ -2043,7 +2043,7 @@ PROCEDURE tab_listsubparts(p_type NUMBER, p_recname VARCHAR2
 -------------------------------------------------------------------------------------------------------
 PROCEDURE idx_listsubparts(p_type NUMBER, p_recname VARCHAR2, p_indexid VARCHAR2, 
                                 p_part_id VARCHAR2, p_part_name VARCHAR2) IS
-            l_part_def VARCHAR2(400 CHAR);
+            l_part_def CLOB;
             l_counter INTEGER := 0;
             l_module v$session.module%type;
             l_action v$session.action%type;
@@ -2100,7 +2100,7 @@ PROCEDURE idx_listsubparts(p_type NUMBER, p_recname VARCHAR2, p_indexid VARCHAR2
 -------------------------------------------------------------------------------------------------------
 PROCEDURE idx_rangesubparts(p_type NUMBER, p_recname VARCHAR2, p_indexid VARCHAR2, 
                                 p_part_id VARCHAR2, p_part_name VARCHAR2) IS
-            l_part_def VARCHAR2(400 CHAR);
+            l_part_def CLOB;
             l_counter INTEGER := 0;
             l_module v$session.module%type;
             l_action v$session.action%type;
@@ -2160,7 +2160,7 @@ PROCEDURE tab_part_ranges(p_type NUMBER, p_recname VARCHAR2, p_part_id VARCHAR2,
 			          p_arch_flag VARCHAR2 DEFAULT 'N', 
                                   p_owner VARCHAR2, p_table_name VARCHAR2,
 	                          p_part_name VARCHAR2 DEFAULT '') IS
-                l_part_def VARCHAR2(200 CHAR);
+                l_part_def CLOB;
                 l_counter INTEGER := 0;
                 l_subpartition INTEGER;
 		l_module v$session.module%type;
@@ -2274,7 +2274,7 @@ PROCEDURE tab_part_lists(p_type NUMBER, p_recname VARCHAR2, p_part_id VARCHAR2,
                 ORDER BY part_no, part_name;
 
                 p_tab_part_lists c_tab_part_lists%ROWTYPE;
-                l_part_def VARCHAR2(1000 CHAR);
+                l_part_def CLOB;
                 l_counter INTEGER := 0;
                 l_subpartition INTEGER;
 		l_module v$session.module%type;
@@ -2361,7 +2361,7 @@ PROCEDURE ind_hashparts(p_type      NUMBER
 	                       ,p_recname   VARCHAR2
 	                       ,p_indexid   VARCHAR2 DEFAULT '_'
 	                       ,p_num_parts INTEGER) IS
-                l_part_def VARCHAR2(200 CHAR);
+                l_part_def CLOB;
                 l_counter INTEGER := 0;
                 l_subpartition INTEGER;
 		l_module v$session.module%type;
@@ -2390,7 +2390,7 @@ PROCEDURE ind_hashparts(p_type      NUMBER
 PROCEDURE tab_hashparts(p_type      NUMBER
 	                       ,p_recname   VARCHAR2
 	                       ,p_num_parts INTEGER) IS
-                l_part_def VARCHAR2(200 CHAR);
+                l_part_def CLOB;
                 l_counter INTEGER := 0;
                 l_subpartition INTEGER;
         BEGIN
@@ -2404,7 +2404,7 @@ PROCEDURE ind_listparts(p_type NUMBER, p_recname VARCHAR2, p_indexid VARCHAR2,
                                 p_part_id VARCHAR2, p_part_name VARCHAR2,
                                 p_arch_flag VARCHAR2 DEFAULT ''
                                ) IS
-                l_part_def VARCHAR2(400 CHAR);
+                l_part_def CLOB;
                 l_counter INTEGER := 0;
 		l_module v$session.module%type;
 		l_action v$session.action%type;
@@ -2463,7 +2463,7 @@ PROCEDURE ind_part_ranges(p_type NUMBER, p_recname VARCHAR2, p_indexid VARCHAR2,
                             p_owner VARCHAR2, 
                             p_index_prefix VARCHAR2 DEFAULT 'PS',
 	                    p_part_name VARCHAR2 DEFAULT '') IS
-                l_part_def VARCHAR2(100 CHAR);
+                l_part_def CLOB;
                 l_subpartition INTEGER;
 		l_module v$session.module%type;
 		l_action v$session.action%type;
@@ -2541,7 +2541,7 @@ PROCEDURE ind_part_lists(p_type NUMBER, p_recname VARCHAR2, p_indexid VARCHAR2,
                 ORDER BY part_no, part_name
                 ;
                 p_ind_part_lists c_ind_part_lists%ROWTYPE;
-                l_part_def VARCHAR2(100 CHAR);
+                l_part_def CLOB;
                 l_subpartition INTEGER;
 		l_module v$session.module%type;
 		l_action v$session.action%type;
@@ -2640,7 +2640,7 @@ PROCEDURE glob_ind_parts(p_type INTEGER, p_recname VARCHAR2, p_indexid VARCHAR2,
                 ORDER BY part_no, part_name;
 
                 p_idx_parts c_idx_parts%ROWTYPE;
-                l_part_def VARCHAR2(200 CHAR);
+                l_part_def CLOB;
                 l_counter INTEGER := 0;
                 l_subpartition INTEGER;
 		l_module v$session.module%type;
@@ -3979,7 +3979,7 @@ PROCEDURE add_tab_parts
 ,p_arch_flag        VARCHAR2 DEFAULT 'N'
 ,p_part_name        VARCHAR2 DEFAULT ''
 ) IS
-  l_part_def VARCHAR2(200 CHAR);
+  l_part_def CLOB;
   l_counter INTEGER := 0;
   l_subpartition INTEGER;
   l_module v$session.module%type;
@@ -4362,7 +4362,7 @@ PROCEDURE split_tab_parts
 ,p_arch_flag     VARCHAR2
 ,p_part_name     VARCHAR2
 ) IS
-  l_part_def VARCHAR2(200 CHAR);
+  l_part_def CLOB;
   l_counter INTEGER := 0;
   l_subpartition INTEGER;
   l_module v$session.module%type;
