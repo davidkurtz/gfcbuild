@@ -5031,7 +5031,7 @@ BEGIN
       ELSE
         ins_line(k_alter,'FROM '||LOWER(l_schema||p_tables.src_table_name)||' s;');
       END IF;
-      ins_line(k_build,'dbms_output.put_line(TO_CHAR(SQL%ROWCOUNT)||'' rows inserted.'');');
+      ins_line(k_alter,'dbms_output.put_line(TO_CHAR(SQL%ROWCOUNT)||'' rows inserted.'');');
       ins_line(k_alter,'COMMIT;');
       ins_line(k_alter,'END;');
       ins_line(k_alter,'/');
