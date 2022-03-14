@@ -71,6 +71,7 @@ l_desc_index VARCHAR2(1 CHAR);          -- Y to force desc index, N to disable, 
 l_repopdfltsub VARCHAR2(1 CHAR);        -- Y to force move data from old to new default list subpartition
 l_repopnewmax VARCHAR2(1 CHAR);         -- Y to force add partition by exchange of max value and reinsert
 l_rename_parts VARCHAR2(1 CHAR);        -- Y to force rename partition before rebuild - only required in Oracle 8i--20.05.2014
+l_split_index_update VARCHAR2(10 CHAR); -- Index update on Split partition: None=No update index clause, ALL=Update Indexes, GLOBAL=UPDATE GLOBAL INDEXES --14.3.2022
 l_debug_level INTEGER := 0;             -- variable to hold debug level of package
 l_debug_indent INTEGER := 0;
 
@@ -222,6 +223,7 @@ BEGIN
   sys.dbms_output.put_line('08.07.2021 - Add Session parallel force DDL for parallel index creation with automatic parallelism');
   sys.dbms_output.put_line('16.01.2022 - Correct table name in index commands to use custom table names');
   sys.dbms_output.put_line('10.03.2022 - remove physical attribute from index subpartition');
+  sys.dbms_output.put_line('14.03.2022 - control index rebuild on split partition');
   dbms_application_info.set_module(module_name=>l_module, action_name=>l_action);
 END history;
 
@@ -261,6 +263,7 @@ BEGIN
   l_repopdfltsub := 'N';           -- by default will just exchange default subpartition back
   l_repopnewmax := 'N';            -- by default split maxvalue partition rather than exchange and reinsert - added 11.3.2013
   l_rename_parts := 'N';           -- by default do not rename partitions before rebuild - left over from Oracle 8i - added 20.5.2014
+  l_split_index_update := 'ALL';   -- by default update all indexes on split partition --14.03.2022
   l_debug_level := 0;		   -- default debug level is 0
 
   unset_action(p_action_name=>l_action);
@@ -278,34 +281,35 @@ BEGIN
   set_action(p_action_name=>'READ_CONTEXT');
 
   reset_variables;
-  l_chardef          := NVL(SYS_CONTEXT(k_sys_context,'chardef'        ),l_chardef);
-  l_logging          := NVL(SYS_CONTEXT(k_sys_context,'logging'        ),l_logging);
-  l_parallel_table   := NVL(SYS_CONTEXT(k_sys_context,'parallel_table' ),l_parallel_table);
-  l_parallel_index   := NVL(SYS_CONTEXT(k_sys_context,'parallel_index' ),l_parallel_index);
-  l_force_para_dop   := NVL(SYS_CONTEXT(k_sys_context,'force_para_dop'  ),l_force_para_dop);
-  l_roles            := NVL(SYS_CONTEXT(k_sys_context,'roles'          ),l_roles);
-  l_scriptid         := NVL(SYS_CONTEXT(k_sys_context,'scriptid'       ),l_scriptid);
-  l_update_all       := NVL(SYS_CONTEXT(k_sys_context,'update_all'     ),l_update_all);
-  l_read_all         := NVL(SYS_CONTEXT(k_sys_context,'read_all'       ),l_read_all);
-  l_drop_index       := NVL(SYS_CONTEXT(k_sys_context,'drop_index'     ),l_drop_index);
-  l_pause            := NVL(SYS_CONTEXT(k_sys_context,'pause'          ),l_pause);
-  l_explicit_schema  := NVL(SYS_CONTEXT(k_sys_context,'explicit_schema'),l_explicit_schema);
-  l_block_sample     := NVL(SYS_CONTEXT(k_sys_context,'block_sample'   ),l_block_sample);
-  l_build_stats      := NVL(SYS_CONTEXT(k_sys_context,'build_stats'    ),l_build_stats);
-  l_deletetempstats  := NVL(SYS_CONTEXT(k_sys_context,'deletetempstats'),l_deletetempstats);
-  l_longtoclob       := NVL(SYS_CONTEXT(k_sys_context,'longtoclob'     ),l_longtoclob);
--- l_ddltrigger       := NVL(SYS_CONTEXT(k_sys_context,'ddltrigger'     ),l_ddltrigger);
-  l_ddlenable        := NVL(SYS_CONTEXT(k_sys_context,'ddlenable'      ),l_ddlenable);
-  l_ddldisable       := NVL(SYS_CONTEXT(k_sys_context,'ddldisable'     ),l_ddldisable);
-  l_drop_purge       := NVL(SYS_CONTEXT(k_sys_context,'drop_purge'     ),l_drop_purge);
--- l_noalterprefix    := NVL(SYS_CONTEXT(k_sys_context,'noalterprefix'  ),l_noalterprefix);
-  l_forcebuild       := NVL(SYS_CONTEXT(k_sys_context,'forcebuild'     ),l_forcebuild);
-  l_desc_index       := NVL(SYS_CONTEXT(k_sys_context,'desc_index'     ),l_desc_index);
-  l_repopdfltsub     := NVL(SYS_CONTEXT(k_sys_context,'repopdfltsub'   ),l_repopdfltsub);
-  l_repopnewmax      := NVL(SYS_CONTEXT(k_sys_context,'repopnewmax'    ),l_repopnewmax);
-  l_rename_parts     := NVL(SYS_CONTEXT(k_sys_context,'rename_parts'   ),l_rename_parts); --20.05.2014
+  l_chardef            := NVL(SYS_CONTEXT(k_sys_context,'chardef'           ),l_chardef);
+  l_logging            := NVL(SYS_CONTEXT(k_sys_context,'logging'           ),l_logging);
+  l_parallel_table     := NVL(SYS_CONTEXT(k_sys_context,'parallel_table'    ),l_parallel_table);
+  l_parallel_index     := NVL(SYS_CONTEXT(k_sys_context,'parallel_index'    ),l_parallel_index);
+  l_force_para_dop     := NVL(SYS_CONTEXT(k_sys_context,'force_para_dop'    ),l_force_para_dop);
+  l_roles              := NVL(SYS_CONTEXT(k_sys_context,'roles'             ),l_roles);
+  l_scriptid           := NVL(SYS_CONTEXT(k_sys_context,'scriptid'          ),l_scriptid);
+  l_update_all         := NVL(SYS_CONTEXT(k_sys_context,'update_all'        ),l_update_all);
+  l_read_all           := NVL(SYS_CONTEXT(k_sys_context,'read_all'          ),l_read_all);
+  l_drop_index         := NVL(SYS_CONTEXT(k_sys_context,'drop_index'        ),l_drop_index);
+  l_pause              := NVL(SYS_CONTEXT(k_sys_context,'pause'             ),l_pause);
+  l_explicit_schema    := NVL(SYS_CONTEXT(k_sys_context,'explicit_schema'   ),l_explicit_schema);
+  l_block_sample       := NVL(SYS_CONTEXT(k_sys_context,'block_sample'      ),l_block_sample);
+  l_build_stats        := NVL(SYS_CONTEXT(k_sys_context,'build_stats'       ),l_build_stats);
+  l_deletetempstats    := NVL(SYS_CONTEXT(k_sys_context,'deletetempstats'   ),l_deletetempstats);
+  l_longtoclob         := NVL(SYS_CONTEXT(k_sys_context,'longtoclob'        ),l_longtoclob);
+--l_ddltrigger         := NVL(SYS_CONTEXT(k_sys_context,'ddltrigger'        ),l_ddltrigger);
+  l_ddlenable          := NVL(SYS_CONTEXT(k_sys_context,'ddlenable'         ),l_ddlenable);
+  l_ddldisable         := NVL(SYS_CONTEXT(k_sys_context,'ddldisable'        ),l_ddldisable);
+  l_drop_purge         := NVL(SYS_CONTEXT(k_sys_context,'drop_purge'        ),l_drop_purge);
+--l_noalterprefix      := NVL(SYS_CONTEXT(k_sys_context,'noalterprefix'     ),l_noalterprefix);
+  l_forcebuild         := NVL(SYS_CONTEXT(k_sys_context,'forcebuild'        ),l_forcebuild);
+  l_desc_index         := NVL(SYS_CONTEXT(k_sys_context,'desc_index'        ),l_desc_index);
+  l_repopdfltsub       := NVL(SYS_CONTEXT(k_sys_context,'repopdfltsub'      ),l_repopdfltsub);
+  l_repopnewmax        := NVL(SYS_CONTEXT(k_sys_context,'repopnewmax'       ),l_repopnewmax);
+  l_rename_parts       := NVL(SYS_CONTEXT(k_sys_context,'rename_parts'      ),l_rename_parts); --20.05.2014
+  l_split_index_update := NVL(SYS_CONTEXT(k_sys_context,'split_index_update'),l_split_index_update); --14.03.2022
 
-  l_debug_level      := NVL(TO_NUMBER(SYS_CONTEXT(k_sys_context,'debug_level')),l_debug_level);
+  l_debug_level        := NVL(TO_NUMBER(SYS_CONTEXT(k_sys_context,'debug_level')),l_debug_level);
 
   unset_action(p_action_name=>l_action);
 END read_context;
@@ -320,33 +324,34 @@ BEGIN
   dbms_application_info.read_module(module_name=>l_module, action_name=>l_action);
   set_action(p_action_name=>'WRITE_CONTEXT');
 
-  dbms_session.set_context(k_sys_context,'chardef'          ,l_chardef);
-  dbms_session.set_context(k_sys_context,'logging'          ,l_logging);
-  dbms_session.set_context(k_sys_context,'parallel_table'   ,l_parallel_table);
-  dbms_session.set_context(k_sys_context,'parallel_index'   ,l_parallel_index);
-  dbms_session.set_context(k_sys_context,'force_para_dop'   ,l_force_para_dop);
-  dbms_session.set_context(k_sys_context,'roles'            ,l_roles);
-  dbms_session.set_context(k_sys_context,'scriptid'         ,l_scriptid);
-  dbms_session.set_context(k_sys_context,'update_all'       ,l_update_all);
-  dbms_session.set_context(k_sys_context,'read_all'         ,l_read_all);
-  dbms_session.set_context(k_sys_context,'drop_index'       ,l_drop_index);
-  dbms_session.set_context(k_sys_context,'pause'            ,l_pause);
-  dbms_session.set_context(k_sys_context,'explicit_schema'  ,l_explicit_schema);
-  dbms_session.set_context(k_sys_context,'block_sample'     ,l_block_sample);
-  dbms_session.set_context(k_sys_context,'build_stats'      ,l_build_stats);
-  dbms_session.set_context(k_sys_context,'deletetempstats'  ,l_deletetempstats);
-  dbms_session.set_context(k_sys_context,'longtoclob'       ,l_longtoclob);
--- dbms_session.set_context(k_sys_context,'ddltrigger'       ,l_ddltrigger);
-  dbms_session.set_context(k_sys_context,'ddlenable'        ,l_ddlenable);
-  dbms_session.set_context(k_sys_context,'ddldisable'       ,l_ddldisable);
-  dbms_session.set_context(k_sys_context,'drop_purge'       ,l_drop_purge);
--- dbms_session.set_context(k_sys_context,'noalterprefix'    ,l_noalterprefix);
-  dbms_session.set_context(k_sys_context,'forcebuild'       ,l_forcebuild);
-  dbms_session.set_context(k_sys_context,'desc_index'       ,l_desc_index);
-  dbms_session.set_context(k_sys_context,'repopdfltsub'     ,l_repopdfltsub);
-  dbms_session.set_context(k_sys_context,'repopnewmax'      ,l_repopnewmax);
-  dbms_session.set_context(k_sys_context,'rename_parts'     ,l_rename_parts); --20.05.2014
-  dbms_session.set_context(k_sys_context,'debug_level'      ,TO_CHAR(l_debug_level));
+  dbms_session.set_context(k_sys_context,'chardef'           ,l_chardef);
+  dbms_session.set_context(k_sys_context,'logging'           ,l_logging);
+  dbms_session.set_context(k_sys_context,'parallel_table'    ,l_parallel_table);
+  dbms_session.set_context(k_sys_context,'parallel_index'    ,l_parallel_index);
+  dbms_session.set_context(k_sys_context,'force_para_dop'    ,l_force_para_dop);
+  dbms_session.set_context(k_sys_context,'roles'             ,l_roles);
+  dbms_session.set_context(k_sys_context,'scriptid'          ,l_scriptid);
+  dbms_session.set_context(k_sys_context,'update_all'        ,l_update_all);
+  dbms_session.set_context(k_sys_context,'read_all'          ,l_read_all);
+  dbms_session.set_context(k_sys_context,'drop_index'        ,l_drop_index);
+  dbms_session.set_context(k_sys_context,'pause'             ,l_pause);
+  dbms_session.set_context(k_sys_context,'explicit_schema'   ,l_explicit_schema);
+  dbms_session.set_context(k_sys_context,'block_sample'      ,l_block_sample);
+  dbms_session.set_context(k_sys_context,'build_stats'       ,l_build_stats);
+  dbms_session.set_context(k_sys_context,'deletetempstats'   ,l_deletetempstats);
+  dbms_session.set_context(k_sys_context,'longtoclob'        ,l_longtoclob);
+--dbms_session.set_context(k_sys_context,'ddltrigger'        ,l_ddltrigger);
+  dbms_session.set_context(k_sys_context,'ddlenable'         ,l_ddlenable);
+  dbms_session.set_context(k_sys_context,'ddldisable'        ,l_ddldisable);
+  dbms_session.set_context(k_sys_context,'drop_purge'        ,l_drop_purge);
+--dbms_session.set_context(k_sys_context,'noalterprefix'     ,l_noalterprefix);
+  dbms_session.set_context(k_sys_context,'forcebuild'        ,l_forcebuild);
+  dbms_session.set_context(k_sys_context,'desc_index'        ,l_desc_index);
+  dbms_session.set_context(k_sys_context,'repopdfltsub'      ,l_repopdfltsub);
+  dbms_session.set_context(k_sys_context,'repopnewmax'       ,l_repopnewmax);
+  dbms_session.set_context(k_sys_context,'rename_parts'      ,l_rename_parts); --20.05.2014
+  dbms_session.set_context(k_sys_context,'split_index_update',l_split_index_update); --14.03.2022
+  dbms_session.set_context(k_sys_context,'debug_level'       ,TO_CHAR(l_debug_level));
 
   unset_action(p_action_name=>l_action);
 END write_context;
@@ -2714,249 +2719,236 @@ PROCEDURE mk_part_indexes(p_recname    VARCHAR2
                                  ,p_schema     VARCHAR2
                                  ,p_arch_flag  VARCHAR2 
                                  ) IS
-        l_ind_def VARCHAR2(100 CHAR);
-		l_type INTEGER;
-		l_schema VARCHAR2(31 CHAR);
-		l_ind_prefix VARCHAR2(3 CHAR);
-		l_module v$session.module%type;
-		l_action v$session.action%type;
+  l_ind_def VARCHAR2(100 CHAR);
+  l_type INTEGER;
+  l_schema VARCHAR2(31 CHAR);
+  l_ind_prefix VARCHAR2(3 CHAR);
+  l_module v$session.module%type;
+  l_action v$session.action%type;
 BEGIN
-	dbms_application_info.read_module(module_name=>l_module, action_name=>l_action);
-	set_action(p_action_name=>'MK_PART_INDEXES');
+  dbms_application_info.read_module(module_name=>l_module, action_name=>l_action);
+  set_action(p_action_name=>'MK_PART_INDEXES');
 
-	debug_msg('mk_part_indexes:'||p_recname||'/'||p_schema||'.'||p_table_name||'/arch_flag='||p_arch_flag,6);
+  debug_msg('mk_part_indexes:'||p_recname||'/'||p_schema||'.'||p_table_name||'/arch_flag='||p_arch_flag,6);
 
-    -- ins_line(k_index,'set echo on pause off verify on feedback on timi on autotrace off pause off lines 100');
-    -- ins_line(k_index,LOWER('spool gfcindex_'||l_dbname||'_'||p_recname||'.lst'));
-    signature(k_index,FALSE,'gfcindex',p_recname);
-    whenever_sqlerror(k_index,TRUE);
-    forceddldop(k_index);
-	ddlpermit(k_index,TRUE); -- added 10.10.2007
+  -- ins_line(k_index,'set echo on pause off verify on feedback on timi on autotrace off pause off lines 100');
+  -- ins_line(k_index,LOWER('spool gfcindex_'||l_dbname||'_'||p_recname||'.lst'));
+  signature(k_index,FALSE,'gfcindex',p_recname);
+  whenever_sqlerror(k_index,TRUE);
+  forceddldop(k_index);
+  ddlpermit(k_index,TRUE); -- added 10.10.2007
 -- 25.5.2011 do not build unique index on IOT
-    FOR p_indexes IN(
-       	SELECT   g.indexid, g.uniqueflag, g.platform_ora
-		,        p.RECNAME
-		,        DECODE(r.sqltablename,' ','PS_'||r.recname,r.sqltablename) table_name --16.1.2022 added table name to cater for PeopleTools tables
-	    ,        NVL(i.part_id,p.part_id) part_id
-	    ,        NVL(i.part_type,p.part_type) part_type
-	    ,        NVL(i.part_column,p.part_column) part_column
-	    ,        NVL(i.subpart_type,p.subpart_type) subpart_type
-					,        NVL(i.hash_partitions,p.hash_partitions) hash_partitions
-	                ,        NVL(i.subpart_column,p.subpart_column) subpart_column 
-					, 	     NVL(i.idx_tablespace,p.idx_tablespace) idx_tablespace
-	                ,        NVL(i.idx_storage,p.idx_storage) idx_storage
-	                ,        NVL(i.override_schema,p.override_schema) override_schema
-					,        CASE WHEN p.part_type = 'N' THEN 'G' -- added 9.11.2011 to support partitioned indexes on non-partitioned tables
-                                  WHEN i.indexid IS NULL THEN 'L' -- separated 20.11.2020 
-								  WHEN i.part_type = p.part_type  -- added 20.11.2020 to match table to index partitioning
-								   AND i.part_column = p.part_column 
-								   AND (i.subpart_type = p.subpart_type OR i.subpart_type IS NULL) 
-								   AND (i.subpart_column = p.subpart_column OR i.subpart_column IS NULL) THEN 'L'
-					              WHEN i.part_type = 'L' THEN 'L'
- 			                      ELSE 'G'
-			                 END AS ind_part_type
-					,        i.partial_index
-					,        i.name_suffix
-        	        FROM     gfc_ps_indexdefn g -- 6.9.2007 removed psindexdefn
-			         LEFT OUTER JOIN gfc_part_indexes i
-			         ON i.recname = g.recname
-			         AND i.indexid = g.indexid
-                	,        gfc_part_tables p
-					,        psrecdefn r
-	                WHERE    p.recname = g.recname
-					AND      g.recname = p_recname
-                	AND      p.recname = p_recname
-					AND      r.recname = p_recname
-					AND      g.platform_ora = 1
-					AND      NOT (p.organization = 'I' AND g.indexid = '_') 
-					ORDER BY g.indexid)
-                LOOP
-	                IF l_explicit_schema = 'Y' THEN
-						l_schema := NVL(p_indexes.override_schema,LOWER(p_schema))||'.';
-					ELSE 
-						l_schema := '';
-					END IF;
+  FOR p_indexes IN(
+    SELECT g.indexid, g.uniqueflag, g.platform_ora
+    ,      p.RECNAME
+    ,      DECODE(r.sqltablename,' ','PS_'||r.recname,r.sqltablename) table_name --16.1.2022 added table name to cater for PeopleTools tables
+    ,      NVL(i.part_id,p.part_id) part_id
+    ,      NVL(i.part_type,p.part_type) part_type
+    ,      NVL(i.part_column,p.part_column) part_column
+    ,      NVL(i.subpart_type,p.subpart_type) subpart_type
+    ,      NVL(i.hash_partitions,p.hash_partitions) hash_partitions
+    ,      NVL(i.subpart_column,p.subpart_column) subpart_column 
+    ,      NVL(i.idx_tablespace,p.idx_tablespace) idx_tablespace
+    ,      NVL(i.idx_storage,p.idx_storage) idx_storage
+    ,      NVL(i.override_schema,p.override_schema) override_schema
+    ,      CASE WHEN p.part_type = 'N' THEN 'G' -- added 9.11.2011 to support partitioned indexes on non-partitioned tables
+                WHEN i.indexid IS NULL THEN 'L' -- separated 20.11.2020 
+                WHEN i.part_type = p.part_type  -- added 20.11.2020 to match table to index partitioning
+                 AND i.part_column = p.part_column 
+                 AND (i.subpart_type = p.subpart_type OR i.subpart_type IS NULL) 
+                 AND (i.subpart_column = p.subpart_column OR i.subpart_column IS NULL) THEN 'L'
+                WHEN i.part_type = 'L' THEN 'L'
+                ELSE 'G' END AS ind_part_type
+    ,      i.partial_index
+    ,      i.name_suffix
+    FROM   gfc_ps_indexdefn g -- 6.9.2007 removed psindexdefn
+           LEFT OUTER JOIN gfc_part_indexes i
+           ON i.recname = g.recname
+           AND i.indexid = g.indexid
+    ,        gfc_part_tables p
+    ,        psrecdefn r
+    WHERE    p.recname = g.recname
+    AND      g.recname = p_recname
+    AND      p.recname = p_recname
+    AND      r.recname = p_recname
+    AND      g.platform_ora = 1
+    AND      NOT (p.organization = 'I' AND g.indexid = '_') 
+    ORDER BY g.indexid)
+  LOOP
+    IF l_explicit_schema = 'Y' THEN
+      l_schema := NVL(p_indexes.override_schema,LOWER(p_schema))||'.';
+    ELSE 
+      l_schema := '';
+    END IF;
 
-                    --first do indexes for standard build script --
-                    whenever_sqlerror(k_index,FALSE);
-					IF l_drop_index = 'Y' THEN 
-	       	                ins_line(k_index,'DROP INDEX '
-                                          ||LOWER(l_schema||'ps'||p_indexes.indexid||p_recname||p_indexes.name_suffix));
-       		                ins_line(k_index,'/');
-       	        	        ins_line(k_index,'');
-					END IF;
+    --first do indexes for standard build script --
+    whenever_sqlerror(k_index,FALSE);
+    IF l_drop_index = 'Y' THEN 
+      ins_line(k_index,'DROP INDEX '||LOWER(l_schema||'ps'||p_indexes.indexid||p_recname||p_indexes.name_suffix));
+      ins_line(k_index,'/');
+      ins_line(k_index,'');
+    END IF;
 
-               	    whenever_sqlerror(k_index,TRUE);
-                    FOR l_type IN 0..1 LOOP -- do the index create twice
-						IF l_type = 0 THEN
-							l_ind_prefix := 'gfc';
-						ELSE
-							l_ind_prefix := 'ps';
-						END IF;
-						l_ind_def := 'CREATE';
-						IF p_indexes.uniqueflag = 1 THEN
-							l_ind_def := l_ind_def||' UNIQUE';
-						END IF;
-						l_ind_def := l_ind_def||' INDEX '||
-								LOWER(l_schema||l_ind_prefix||p_indexes.indexid||p_recname||p_indexes.name_suffix)||
-                                                                ' ON '||LOWER(l_schema||p_indexes.table_name);  --16.1.2022 correct table name for PeopleTools tables
-						ins_line(l_type,l_ind_def);
-						ind_cols(l_type,p_recname,p_indexes.indexid,l_desc_index);
-						IF p_indexes.ind_part_type = 'L' THEN -- local partitioning
-							ins_line(l_type,'LOCAL');
-							IF p_indexes.part_type = 'L' THEN
-								ind_part_lists(p_type=>l_type,
-							                   p_recname=>p_recname,
-						                       p_indexid=>p_indexes.indexid,
-						                   p_part_id=>p_indexes.part_id,
-						                   p_subpart_type=>p_indexes.subpart_type,
-					        	           p_subpartitions=>p_indexes.hash_partitions);
-							ELSIF p_indexes.part_type = 'R' THEN
-        	                        	ind_part_ranges(p_type=>l_type,
-					          p_recname=>p_recname,
-					          p_indexid=>p_indexes.indexid,
-					          p_part_id=>p_indexes.part_id,
-					          p_subpart_type=>p_indexes.subpart_type,
-					          p_subpartitions=>p_indexes.hash_partitions,
-					          p_arch_flag=>p_arch_flag,
-					          p_owner=>p_schema,
-					          p_index_prefix=>'PS',
-					          p_part_name=>p_recname);
-							ELSIF p_indexes.part_type = 'H' AND p_indexes.hash_partitions > 1 THEN
-								ind_hashparts(l_type,p_recname
-					                    ,p_indexes.indexid,p_indexes.hash_partitions);
-							END IF;
+    whenever_sqlerror(k_index,TRUE);
+    FOR l_type IN 0..1 LOOP -- do the index create twice
+      IF l_type = 0 THEN
+        l_ind_prefix := 'gfc';
+      ELSE
+        l_ind_prefix := 'ps';
+      END IF;
+      l_ind_def := 'CREATE';
+      IF p_indexes.uniqueflag = 1 THEN
+        l_ind_def := l_ind_def||' UNIQUE';
+      END IF;
+      l_ind_def := l_ind_def||' INDEX '||LOWER(l_schema||l_ind_prefix||p_indexes.indexid||p_recname||p_indexes.name_suffix)||
+                   ' ON '||LOWER(l_schema||p_indexes.table_name);  --16.1.2022 correct table name for PeopleTools tables
+      ins_line(l_type,l_ind_def);
+      ind_cols(l_type,p_recname,p_indexes.indexid,l_desc_index);
+      IF p_indexes.ind_part_type = 'L' THEN -- local partitioning
+        ins_line(l_type,'LOCAL');
+        IF p_indexes.part_type = 'L' THEN
+          ind_part_lists(p_type=>l_type,
+                         p_recname=>p_recname,
+                         p_indexid=>p_indexes.indexid,
+                         p_part_id=>p_indexes.part_id,
+                         p_subpart_type=>p_indexes.subpart_type,
+                         p_subpartitions=>p_indexes.hash_partitions);
+        ELSIF p_indexes.part_type = 'R' THEN
+          ind_part_ranges(p_type=>l_type,
+                          p_recname=>p_recname,
+                          p_indexid=>p_indexes.indexid,
+                          p_part_id=>p_indexes.part_id,
+                          p_subpart_type=>p_indexes.subpart_type,
+                          p_subpartitions=>p_indexes.hash_partitions,
+                          p_arch_flag=>p_arch_flag,
+                          p_owner=>p_schema,
+                          p_index_prefix=>'PS',
+                          p_part_name=>p_recname);
+        ELSIF p_indexes.part_type = 'H' AND p_indexes.hash_partitions > 1 THEN
+          ind_hashparts(l_type,p_recname
+                       ,p_indexes.indexid,p_indexes.hash_partitions);
+        END IF;
+      ELSIF p_indexes.part_type IN('R') THEN -- add global range index clause here
+        IF p_indexes.part_type = 'R' THEN
+          ins_line(l_type,'GLOBAL PARTITION BY RANGE ('||p_indexes.part_column||')');
+        ELSE -- list
+          ins_line(l_type,'GLOBAL PARTITION BY LIST('||p_indexes.part_column||')');
+        END IF;
+        IF p_indexes.subpart_type = 'H' AND 
+           p_indexes.hash_partitions > 1 AND 
+           p_indexes.subpart_column IS NOT NULL THEN
+            ins_line(l_type,'SUBPARTITION BY HASH ('||p_indexes.subpart_column||') SUBPARTITIONS '||p_indexes.hash_partitions);
+        ELSIF p_indexes.subpart_type = 'L' AND 
+              p_indexes.subpart_column IS NOT NULL THEN
+          ins_line(l_type,'SUBPARTITION BY LIST ('||p_indexes.subpart_column||')');
+        END IF;
+        glob_ind_parts(l_type,p_indexes.recname, p_indexes.indexid, p_indexes.part_id,
+                              p_indexes.part_type, p_indexes.subpart_type,
+                              p_indexes.hash_partitions);
 
-						ELSIF p_indexes.part_type IN('R') THEN -- add global range index clause here
-							IF p_indexes.part_type = 'R' THEN
-       				                ins_line(l_type,'GLOBAL PARTITION BY RANGE ('
-   						        ||p_indexes.part_column||')');
-							ELSE -- list-although oracle doesn't support this yet!
-       				                ins_line(l_type,'GLOBAL PARTITION BY LIST('
-						        ||p_indexes.part_column||')');
-							END IF;
-		       	            IF p_indexes.subpart_type = 'H' AND 
-							   p_indexes.hash_partitions > 1 AND 
-							   p_indexes.subpart_column IS NOT NULL THEN
-								ins_line(l_type,'SUBPARTITION BY HASH ('||p_indexes.subpart_column
-									     ||') SUBPARTITIONS '||p_indexes.hash_partitions);
-							ELSIF p_indexes.subpart_type = 'L' AND 
-							      p_indexes.subpart_column IS NOT NULL THEN
-								ins_line(l_type,'SUBPARTITION BY LIST ('||p_indexes.subpart_column||')');
-							END IF;
-		                    glob_ind_parts(l_type,p_indexes.recname, p_indexes.indexid, p_indexes.part_id,
-					          p_indexes.part_type, p_indexes.subpart_type,
-					          p_indexes.hash_partitions);
+      ELSIF p_indexes.part_type = 'H' AND p_indexes.hash_partitions > 1 THEN
+        ins_line(l_type,'GLOBAL PARTITION BY HASH ('||p_indexes.part_column||')');
+        ind_hashparts(p_type     =>l_type
+                     ,p_recname  =>p_indexes.recname
+                     ,p_indexid  =>p_indexes.indexid
+                     ,p_num_parts=>p_indexes.hash_partitions);
+      END IF;
 
-						ELSIF p_indexes.part_type = 'H' AND p_indexes.hash_partitions > 1 THEN
-							ins_line(l_type,'GLOBAL PARTITION BY HASH ('||p_indexes.part_column||')');
-							ind_hashparts(p_type     =>l_type
-					                     ,p_recname  =>p_indexes.recname
-					                     ,p_indexid  =>p_indexes.indexid
-					                     ,p_num_parts=>p_indexes.hash_partitions);
+      IF p_indexes.partial_index = 'Y' THEN --added 26.11.2020 partial indexing support
+        ins_line(l_type,'INDEXING PARTIAL');
+      END IF;
 
-						END IF;
+      -- index level storage clause
+      IF p_indexes.idx_tablespace IS NOT NULL THEN
+        ins_line(l_type,'TABLESPACE '||p_indexes.idx_tablespace);
+      END IF;
+      IF p_indexes.idx_storage IS NOT NULL THEN
+        ins_line(l_type,idx_storage(p_recname, p_indexes.indexid, p_indexes.idx_storage, p_indexes.hash_partitions)); -- 6.9.2007
+      END IF;
 
-						IF p_indexes.partial_index = 'Y' THEN --added 26.11.2020 partial indexing support
-							ins_line(l_type,'INDEXING PARTIAL');
-						END IF;
+      -- 9.10.2003 - create index parallel
+      IF l_parallel_index = 'Y' THEN
+        IF l_force_para_dop IS NULL THEN
+          ins_line(l_type,'PARALLEL');
+        ELSE
+          ins_line(l_type,'PARALLEL '||l_force_para_dop);
+        END IF;
+      ELSE
+        ins_line(l_type,'NOPARALLEL');
+      END IF;
 
-						-- index level storage clause
-						IF p_indexes.idx_tablespace IS NOT NULL THEN
-							ins_line(l_type,'TABLESPACE '||p_indexes.idx_tablespace);
-       		            END IF;
-                      	IF p_indexes.idx_storage IS NOT NULL THEN
-							ins_line(l_type,idx_storage(p_recname, p_indexes.indexid, 
-					                 p_indexes.idx_storage, p_indexes.hash_partitions)); -- 6.9.2007
-                        END IF;
+      -- 9.10.2003 - create index nologging, then change it to logged noparallel
+      IF l_logging = 'N' THEN
+        ins_line(l_type,'NOLOGGING');
+      END IF;
+      ins_line(l_type,'/');
+      ins_line(l_type,'');
 
-                        -- 9.10.2003 - create index parallel
-       	                IF l_parallel_index = 'Y' THEN
-                    IF l_force_para_dop IS NULL THEN
-                        ins_line(l_type,'PARALLEL');
-                    ELSE
-                        ins_line(l_type,'PARALLEL '||l_force_para_dop);
-                    END IF;
-						ELSE
-							ins_line(l_type,'NOPARALLEL');
-                        END IF;
+      IF l_logging = 'N' THEN
+        ins_line(l_type,'ALTER INDEX '||LOWER(l_schema||l_ind_prefix||p_indexes.indexid||p_recname||p_indexes.name_suffix));
+        ins_line(l_type,'LOGGING');
+        ins_line(l_type,'/');
+      END IF;
+      IF l_parallel_index = 'Y' THEN
+        ins_line(l_type,'ALTER INDEX '||LOWER(l_schema||l_ind_prefix||p_indexes.indexid||p_recname||p_indexes.name_suffix));
+        ins_line(l_type,'NOPARALLEL');
+        ins_line(l_type,'/');
+      END IF;
+      ins_line(l_type,'');
+    END LOOP;
 
-       	                -- 9.10.2003 - create index nologging, then change it to logged noparallel
-               	        IF l_logging = 'N' THEN
-							ins_line(l_type,'NOLOGGING');
-                        END IF;
-                        ins_line(l_type,'/');
-       	                ins_line(l_type,'');
+    whenever_sqlerror(k_build,FALSE);
 
-                        IF l_logging = 'N' THEN
-							ins_line(l_type,'ALTER INDEX '||
-							          LOWER(l_schema||l_ind_prefix||p_indexes.indexid||p_recname
-                                                   ||p_indexes.name_suffix));
-                                        ins_line(l_type,'LOGGING');
-       	                                ins_line(l_type,'/');
-               	        END IF;
-                       	IF l_parallel_index = 'Y' THEN
-                               	       ins_line(l_type,'ALTER INDEX '||
-					          LOWER(l_schema||l_ind_prefix||p_indexes.indexid||p_recname
-                                                  ||p_indexes.name_suffix));
-							ins_line(l_type,'NOPARALLEL');
-               	            ins_line(l_type,'/');
-                        END IF;
-       	                ins_line(l_type,'');
-					END LOOP;
-                    whenever_sqlerror(k_build,FALSE);
-                    IF l_drop_index = 'Y' THEN
-                                ins_line(k_build,l_noalterprefix||'DROP INDEX '
-				          ||LOWER(l_schema||'ps'||p_indexes.indexid||p_recname
-                                          ||p_indexes.name_suffix)); -- 6.9.2007
-					ELSE
-                                ins_line(k_build,'ALTER INDEX '||LOWER(l_schema||'ps'||p_indexes.indexid||p_recname)
-                                          ||' RENAME TO old'||LOWER(p_indexes.indexid||p_recname
-                                          ||p_indexes.name_suffix));
-                    END IF;
-					ins_line(k_build,'/');
-					whenever_sqlerror(k_build,TRUE);
-                    ins_line(k_build,l_noalterprefix||'ALTER INDEX ' -- 6.9.2007 
-	                         ||LOWER(l_schema||'gfc'||p_indexes.indexid||p_recname||p_indexes.name_suffix)
-	                         ||' RENAME TO ps'||LOWER(p_indexes.indexid||p_recname||p_indexes.name_suffix)); 
-					ins_line(k_build,'/');
-                    ins_line(k_build,'');
+    IF l_drop_index = 'Y' THEN
+      ins_line(k_build,l_noalterprefix||'DROP INDEX '||LOWER(l_schema||'ps'||p_indexes.indexid||p_recname||p_indexes.name_suffix)); -- 6.9.2007
+    ELSE
+      ins_line(k_build,'ALTER INDEX '||LOWER(l_schema||'ps'||p_indexes.indexid||p_recname)
+                       ||' RENAME TO old'||LOWER(p_indexes.indexid||p_recname
+                       ||p_indexes.name_suffix));
+    END IF;
+    ins_line(k_build,'/');
+
+    whenever_sqlerror(k_build,TRUE);
+
+    ins_line(k_build,l_noalterprefix||'ALTER INDEX ' -- 6.9.2007 
+                     ||LOWER(l_schema||'gfc'||p_indexes.indexid||p_recname||p_indexes.name_suffix)
+                     ||' RENAME TO ps'||LOWER(p_indexes.indexid||p_recname||p_indexes.name_suffix)); 
+    ins_line(k_build,'/');
+    ins_line(k_build,'');
 -- 30.6.2005-bugfix-do not  drop anything after index only build
---                      IF l_drop_index = 'Y' THEN
---                            	whenever_sqlerror(k_index,FALSE);
---                              ins_line(k_index,'DROP INDEX '||LOWER(l_schema||'ps'||p_indexes.indexid||p_recname
---				                        ||p_indexes.name_suffix)||';');
---             			whenever_sqlerror(k_index,TRUE);
---     			ELSE
---                              ins_line(k_index,'ALTER INDEX '||LOWER(p_schema||'ps'||p_indexes.indexid||p_recname
---				                         ||p_indexes.name_suffix)||' RENAME TO old'
---                                                       ||LOWER(p_indexes.indexid||p_recname||p_indexes.name_suffix)||';');
---                      END IF;
---                      ins_line(k_index,'ALTER INDEX '||LOWER(l_schema||'gfc'||p_indexes.indexid||p_recname||p_indexes.name_suffix)
---	   		                         ||' RENAME TO ps'||LOWER(p_indexes.indexid||p_recname||p_indexes.name_suffix)||';');
-                        ins_line(k_index,'');
-                END LOOP;
-		ddlpermit(k_index,FALSE); -- added 10.10.2007
-                ins_line(k_index,'spool off');
+--  IF l_drop_index = 'Y' THEN
+--    whenever_sqlerror(k_index,FALSE);
+--    ins_line(k_index,'DROP INDEX '||LOWER(l_schema||'ps'||p_indexes.indexid||p_recname||p_indexes.name_suffix)||';');
+--    whenever_sqlerror(k_index,TRUE);
+--  ELSE
+--    ins_line(k_index,'ALTER INDEX '||LOWER(p_schema||'ps'||p_indexes.indexid||p_recname||p_indexes.name_suffix)||' RENAME TO old'
+--                                                   ||LOWER(p_indexes.indexid||p_recname||p_indexes.name_suffix)||';');
+--  END IF;
+--  ins_line(k_index,'ALTER INDEX '||LOWER(l_schema||'gfc'||p_indexes.indexid||p_recname||p_indexes.name_suffix)
+--                ||' RENAME TO ps'||LOWER(p_indexes.indexid||p_recname||p_indexes.name_suffix)||';');
+    ins_line(k_index,'');
+  END LOOP;
+  ddlpermit(k_index,FALSE); -- added 10.10.2007
+  ins_line(k_index,'spool off');
 
-		unset_action(p_action_name=>l_action);
-        END mk_part_indexes;
+  unset_action(p_action_name=>l_action);
+END mk_part_indexes;
 
 -------------------------------------------------------------------------------------------------------
 -- generate all partitioned indexes defined on record
 -------------------------------------------------------------------------------------------------------
 PROCEDURE mk_arch_indexes(p_type       NUMBER
-				 ,p_recname    VARCHAR2
-                                 ,p_schema     VARCHAR2
-                                 ,p_table_name VARCHAR2
-	                         ,p_part_name  VARCHAR2 DEFAULT ''
-		                 ,p_ind_prefix VARCHAR2 DEFAULT 'ARC'
-                                 ) IS
-                l_ind_def VARCHAR2(100 CHAR);
-		l_schema VARCHAR2(31 CHAR);
-		l_module v$session.module%type;
-		l_action v$session.action%type;
-	BEGIN
+                         ,p_recname    VARCHAR2
+                         ,p_schema     VARCHAR2
+                         ,p_table_name VARCHAR2
+                         ,p_part_name  VARCHAR2 DEFAULT ''
+                         ,p_ind_prefix VARCHAR2 DEFAULT 'ARC'
+                         ) IS
+  l_ind_def VARCHAR2(100 CHAR);
+  l_schema VARCHAR2(31 CHAR);
+  l_module v$session.module%type;
+  l_action v$session.action%type;
+BEGIN
 		dbms_application_info.read_module(module_name=>l_module, action_name=>l_action);
 		set_action(p_action_name=>'MK_ARCH_INDEXES');
 
@@ -3346,12 +3338,12 @@ PROCEDURE mk_gt_indexes (p_recname VARCHAR2, p_table_name VARCHAR2, p_suffix VAR
 
 -------------------------------------------------------------------------------------------------------
 PROCEDURE subpart_update_indexes(p_type           NUMBER
-                                        ,p_recname        VARCHAR2
-	                                ,p_part_name      VARCHAR2
-	                                ,p_subpart_name   VARCHAR2
-                                        ,p_idx_tablespace VARCHAR2
-		                        ,p_idx_storage    VARCHAR2
-	                                ) IS
+                                ,p_recname        VARCHAR2
+	                        ,p_part_name      VARCHAR2
+	                        ,p_subpart_name   VARCHAR2
+                                ,p_idx_tablespace VARCHAR2
+	                        ,p_idx_storage    VARCHAR2
+	                        ) IS
 		l_sep     VARCHAR2(20 CHAR);
 		l_closure VARCHAR2(2 CHAR);
 
@@ -3375,6 +3367,7 @@ PROCEDURE subpart_update_indexes(p_type           NUMBER
 		dbms_application_info.read_module(module_name=>l_module, action_name=>l_action);
 		set_action(p_action_name=>'SUBPART_UPDATE_INDEXES');
 
+                --this procedure is used to add table partitions - no need to control UPDATE INDEXES clause
 		l_sep := 'UPDATE INDEXES (';
 		l_closure := '';
 		OPEN c_ind_subparts(p_recname);
@@ -3385,8 +3378,7 @@ PROCEDURE subpart_update_indexes(p_type           NUMBER
 
                         ins_line(p_type,l_sep||LOWER('PS'||p_ind_subparts.indexid||p_recname)
                                              ||' (SUBPARTITION '
-                                             ||LOWER(p_recname||p_ind_subparts.indexid
-                                                   ||p_part_name||'_'||p_subpart_name)
+                                             ||LOWER(p_recname||p_ind_subparts.indexid||p_part_name||'_'||p_subpart_name)
                                         );
                         IF p_idx_tablespace IS NOT NULL THEN
        	                        ins_line(p_type,'TABLESPACE '||LOWER(p_idx_tablespace));
@@ -3941,7 +3933,6 @@ BEGIN
 --  IF p_tab_subparts.tab_storage IS NOT NULL THEN
 --    ins_line(p_type,tab_storage(p_recname, p_tab_subparts.tab_storage));
 --  END IF;
-
 
     subpart_update_indexes(p_type, p_recname
                           ,p_tab_subparts.part_name
@@ -4519,8 +4510,46 @@ BEGIN
     END IF;
 
 -- tail piece
-    ins_line(p_type,') UPDATE INDEXES');
+    IF l_split_index_update = 'GLOBAL' THEN --14.3.2022
+      ins_line(p_type,') UPDATE GLOBAL INDEXES');
+    ELSIF l_split_index_update = 'NONE' THEN
+      ins_line(p_type,') /*NO INDEX UPDATE*/');
+    ELSIF l_split_index_update = 'ALL' THEN
+      ins_line(p_type,') UPDATE INDEXES');
+    ELSE
+      ins_line(p_type,') UPDATE INDEXES');
+    END IF;
     ins_line(p_type,'/');
+
+    IF l_split_index_update IN('GLOBAL','NONE') THEN --QWERT rebuild indexes
+      FOR p_ind_parts IN ( --find local index partitions
+        WITH x AS (
+          SELECT i.indexid
+          ,      NVL(pi.part_id,pt.part_id) part_id
+          ,      NVL(pi.part_type,pt.part_type) part_type
+          ,      CASE WHEN pi.part_Type = 'N' THEN 'NONE'
+                      WHEN pi.part_id != pt.part_id OR pi.part_Type != pt.part_type THEN 'GLOBAL'
+                      WHEN pi.part_type IS NULL AND pt.part_type != 'N' THEN 'LOCAL'
+                 END as locality
+          FROM gfc_part_tables pt
+          ,    gfc_ps_indexdefn i
+            LEFT OUTER JOIN gfC_part_indexes pi
+              ON pi.recname = i.recname
+              AND pi.indexid = i.indexid
+          WHERE pt.recname = p_recname
+          AND   pt.recname = i.recname    
+        )
+        SELECT x.*, pr.part_name
+        FROM   x
+          LEFT OUTER JOIN gfc_part_ranges pr
+          ON pr.part_id = x.part_id
+        WHERE x.locality = 'LOCAL'
+        AND   pr.part_name IN(p_tab_parts.part_name,p_tab_parts.part_name2)
+      ) LOOP
+        ins_line(p_type,'ALTER INDEX '||LOWER('PS'||p_ind_parts.indexid||p_recname)||
+                        ' REBUILD PARTITION '||LOWER(p_recname||'_'||p_ind_parts.part_name)||' PARALLEL;');
+      END LOOP;
+    END IF;
     ins_line(p_type,'');
   END LOOP;
 
@@ -5088,8 +5117,7 @@ BEGIN
               WHERE  c.fieldname = f.fieldname
               AND    (  (f.fieldtype IN(1) AND l_longtoclob = 'N') --allow partitioning on CLOB 2.3.2015
                      OR  f.fieldtype IN(8,9)) --other raw 
-              AND    (f.length = 0 OR f.length > 2000)
-              )
+              AND    (f.length = 0 OR f.length > 2000))
              OR    t.override_schema IS NOT NULL 
              OR  l_longtoclob = 'Y'
             )
@@ -6018,16 +6046,17 @@ BEGIN
   sys.dbms_output.put_line('Analyze table immediately after rebuild: '||l_build_stats);
   sys.dbms_output.put_line('Delete and lock statistics on GTTs     : '||l_deletetempstats);
   sys.dbms_output.put_line('Force LONGs to CLOBs                   : '||l_longtoclob);
--- sys.dbms_output.put_line('Name of DDL trigger to disable on build: '||l_ddltrigger);
+--sys.dbms_output.put_line('Name of DDL trigger to disable on build: '||l_ddltrigger);
   sys.dbms_output.put_line('Command to enable DDL lock trigger     : '||l_ddlenable);
   sys.dbms_output.put_line('Command to disable DDL lock trigger    : '||l_ddldisable);
   sys.dbms_output.put_line('Drop tables with PURGE option          : '||l_drop_purge);
--- sys.dbms_output.put_line('No alter prefix                        : '||l_noalterprefix);
+--sys.dbms_output.put_line('No alter prefix                        : '||l_noalterprefix);
   sys.dbms_output.put_line('Force rebuild if no change             : '||l_forcebuild);
   sys.dbms_output.put_line('Force descending index                 : '||l_desc_index);
   sys.dbms_output.put_line('Repopulate default list sub-partition  : '||l_repopdfltsub);
   sys.dbms_output.put_line('Repopulate new max value partition     : '||l_repopnewmax);
   sys.dbms_output.put_line('Rename partitions and subpartitions    : '||l_rename_parts);--20.05.2014
+  sys.dbms_output.put_line('Index rebuild on split partition       : '||l_split_index_update);--13.4.2014
   sys.dbms_output.put_line('Debug Level (0=disabled)               : '||l_debug_level);
 
   dbms_application_info.set_module(module_name=>l_module, action_name=>l_action);
@@ -6054,33 +6083,34 @@ END reset_defaults;
 -- set new defaults to contexts
 ------------------------------------------------------------------------------------------------------
 PROCEDURE set_defaults
-(p_chardef         VARCHAR2 DEFAULT ''
-,p_logging         VARCHAR2 DEFAULT ''
-,p_parallel_table  VARCHAR2 DEFAULT ''
-,p_parallel_index  VARCHAR2 DEFAULT ''
-,p_force_para_dop  VARCHAR2 DEFAULT ''
-,p_roles           VARCHAR2 DEFAULT ''
-,p_scriptid        VARCHAR2 DEFAULT ''
-,p_update_all      VARCHAR2 DEFAULT ''
-,p_read_all        VARCHAR2 DEFAULT ''
-,p_drop_index      VARCHAR2 DEFAULT ''
-,p_pause           VARCHAR2 DEFAULT ''
-,p_explicit_schema VARCHAR2 DEFAULT ''
-,p_block_sample    VARCHAR2 DEFAULT ''
-,p_build_stats     VARCHAR2 DEFAULT ''
-,p_deletetempstats VARCHAR2 DEFAULT ''
-,p_longtoclob      VARCHAR2 DEFAULT ''
--- ,p_ddltrigger      VARCHAR2 DEFAULT '*'
-,p_ddlenable       VARCHAR2 DEFAULT ''
-,p_ddldisable      VARCHAR2 DEFAULT ''
-,p_drop_purge      VARCHAR2 DEFAULT ''
--- ,p_noalterprefix   VARCHAR2 DEFAULT ''
-,p_forcebuild      VARCHAR2 DEFAULT ''
-,p_desc_index      VARCHAR2 DEFAULT ''
-,p_repopdfltsub    VARCHAR2 DEFAULT ''
-,p_repopnewmax     VARCHAR2 DEFAULT ''
-,p_rename_parts    VARCHAR2 DEFAULT ''
-,p_debug_level     INTEGER DEFAULT NULL
+(p_chardef            VARCHAR2 DEFAULT ''
+,p_logging            VARCHAR2 DEFAULT ''
+,p_parallel_table     VARCHAR2 DEFAULT ''
+,p_parallel_index     VARCHAR2 DEFAULT ''
+,p_force_para_dop     VARCHAR2 DEFAULT ''
+,p_roles              VARCHAR2 DEFAULT ''
+,p_scriptid           VARCHAR2 DEFAULT ''
+,p_update_all         VARCHAR2 DEFAULT ''
+,p_read_all           VARCHAR2 DEFAULT ''
+,p_drop_index         VARCHAR2 DEFAULT ''
+,p_pause              VARCHAR2 DEFAULT ''
+,p_explicit_schema    VARCHAR2 DEFAULT ''
+,p_block_sample       VARCHAR2 DEFAULT ''
+,p_build_stats        VARCHAR2 DEFAULT ''
+,p_deletetempstats    VARCHAR2 DEFAULT ''
+,p_longtoclob         VARCHAR2 DEFAULT ''
+--,p_ddltrigger         VARCHAR2 DEFAULT '*'
+,p_ddlenable          VARCHAR2 DEFAULT ''
+,p_ddldisable         VARCHAR2 DEFAULT ''
+,p_drop_purge         VARCHAR2 DEFAULT ''
+--,p_noalterprefix      VARCHAR2 DEFAULT ''
+,p_forcebuild         VARCHAR2 DEFAULT ''
+,p_desc_index         VARCHAR2 DEFAULT ''
+,p_repopdfltsub       VARCHAR2 DEFAULT ''
+,p_repopnewmax        VARCHAR2 DEFAULT ''
+,p_rename_parts       VARCHAR2 DEFAULT ''
+,p_split_index_update VARCHAR2 DEFAULT '' --14.3.2022
+,p_debug_level        INTEGER DEFAULT NULL
         ) IS
   l_module v$session.module%type;
 		l_action v$session.action%type;
@@ -6192,6 +6222,10 @@ PROCEDURE set_defaults
 
 		IF p_rename_parts IS NOT NULL THEN
 			l_rename_parts := p_rename_parts; --20.05.2014
+		END IF;
+
+		IF p_split_index_update IS NOT NULL THEN --14.3.2022
+			l_split_index_update := p_split_index_update;
 		END IF;
 
 		IF p_debug_level IS NOT NULL THEN

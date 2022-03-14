@@ -1,10 +1,10 @@
 REM partdata.sql
-rem (c) Go-Faster Consultancy 2001-21
+rem (c) Go-Faster Consultancy 2001-22
 -----------------------------------------------------------------------------------------------------------
 WHENEVER SQLERROR CONTINUE
 spool partdata0
-EXECUTE gfc_pspart.truncate_tables(p_all=>TRUE);
 -----------------------------------------------------------------------------------------------------------
+EXECUTE gfc_pspart.truncate_tables(p_all=>TRUE);
 --@@gfc_partdata_pkg 
 EXECUTE gfc_partdata.partdata;
 -----------------------------------------------------------------------------------------------------------
@@ -26,40 +26,47 @@ execute gfc_pspart.set_defaults(p_parallel_index => 'Y');
 execute gfc_pspart.set_defaults(p_force_para_dop => '48'); 
 execute gfc_pspart.set_defaults(p_block_sample => 'N');
 execute gfc_pspart.set_defaults(p_longtoclob => 'Y');
+
+REM because default subpartition already contains data for partitions being added
+execute gfc_pspart.set_defaults(P_REPOPDFLTSUB => 'Y'); 
+
+REM workaround bug that failed to rebuild local index partitions on split
+execute gfc_pspart.set_defaults(p_split_index_update => 'GLOBAL');
+
 execute gfc_pspart.display_defaults;
 --------------------------------------------------------------------------------------------------------------
 --------------------------------------------------------------------------------------------------------------
 set lines 180 pages 50 pause off 
-column recname          format a15     heading 'PeopleSoft|Record Name'
-column table_name       format a18     heading 'Table Name'
-column part_id          format a8      heading 'Part ID'
-column part_no          format 9999.90 heading 'Part|No.'
-column part_type        format a4      heading 'Part|Type'
-column part_name        format a15     heading 'Part|Name'
-column part_column      format a30     heading 'Part|Column'
-column subpart_type     format a4      heading 'SubP|Type'
-column subpart_column   format a14     heading 'Sub-Part|Column'
-column hash_partitions  format 999     heading 'Hash|Parts'
-column tab_tablespace   format a20     heading 'Table|TblSpc'
-column idx_tablespace   format a20     heading 'Index|TblSpc'
-column tab_storage      format a35     heading 'Table|Storage Clause'
-column idx_storage      format a20     heading 'Index|Storage Clause'
-column sample_size      format 999     heading 'Sample|Size %'
-column method_opt       format a20     heading 'Optimization|Method'
-column override_schema  format a10     heading 'Override|Schema'
-column part_value       format a30     heading 'Part|Value'
-column list_value       format a85     heading 'List|Value'
-column range_name       format a15     heading 'Range|Name'
-column stats_type       format a5      heading 'Stats|Opt'
-column src_table_name   format a18     heading 'Source Table'
-column criteria         format a80     heading 'Criteria'
-column arch_schema      format a8      heading 'Archive|Schema'
-column arch_recname     format a15     heading 'Archive Record'
-column arch_table_name  format a20     heading 'Archive Table'
-column arch_flag        format a4      heading 'Arch|Flag'
-column noarch_condition format a40     heading 'No Archive Condition'
-column name_suffix      format a10     heading 'Name|Suffix'
-column partial_index    format a7      heading 'Partial|Index'
+column recname          format a15       heading 'PeopleSoft|Record Name'
+column table_name       format a18       heading 'Table Name'
+column part_id          format a8        heading 'Part ID'
+column part_no          format 99999.990 heading 'Part|No.'
+column part_type        format a4        heading 'Part|Type'
+column part_name        format a15       heading 'Part|Name'
+column part_column      format a30       heading 'Part|Column'
+column subpart_type     format a4        heading 'SubP|Type'
+column subpart_column   format a14       heading 'Sub-Part|Column'
+column hash_partitions  format 999       heading 'Hash|Parts'
+column tab_tablespace   format a20       heading 'Table|TblSpc'
+column idx_tablespace   format a20       heading 'Index|TblSpc'
+column tab_storage      format a35       heading 'Table|Storage Clause'
+column idx_storage      format a20       heading 'Index|Storage Clause'
+column sample_size      format 999       heading 'Sample|Size %'
+column method_opt       format a20       heading 'Optimization|Method'
+column override_schema  format a10       heading 'Override|Schema'
+column part_value       format a30       heading 'Part|Value'
+column list_value       format a85       heading 'List|Value'
+column range_name       format a15       heading 'Range|Name'
+column stats_type       format a5        heading 'Stats|Opt'
+column src_table_name   format a18       heading 'Source Table'
+column criteria         format a80       heading 'Criteria'
+column arch_schema      format a8        heading 'Archive|Schema'
+column arch_recname     format a15       heading 'Archive Record'
+column arch_table_name  format a20       heading 'Archive Table'
+column arch_flag        format a4        heading 'Arch|Flag'
+column noarch_condition format a40       heading 'No Archive Condition'
+column name_suffix      format a10       heading 'Name|Suffix'
+column partial_index    format a7        heading 'Partial|Index'
 set lines 150 pages 50 echo off timi off
 spool partdata
 
@@ -109,9 +116,11 @@ ORDER BY 1,2,3
 ttitle 'Tablespaces to be created'
 SELECT 	tab_tablespace
 FROM	gfc_part_tables
+WHERE 	arch_flag != 'D'
 UNION
 SELECT 	idx_tablespace
 FROM	gfc_part_tables
+WHERE 	arch_flag != 'D'
 UNION
 SELECT 	tab_tablespace
 FROM	gfc_part_ranges
