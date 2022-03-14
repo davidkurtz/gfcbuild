@@ -27,10 +27,10 @@ execute gfc_pspart.set_defaults(p_force_para_dop => '48');
 execute gfc_pspart.set_defaults(p_block_sample => 'N');
 execute gfc_pspart.set_defaults(p_longtoclob => 'Y');
 
-REM because default subpartition already contains data for partitions being added
-execute gfc_pspart.set_defaults(P_REPOPDFLTSUB => 'Y'); 
+REM if default subpartition already contains data for partitions being added
+REM execute gfc_pspart.set_defaults(P_REPOPDFLTSUB => 'Y'); 
 
-REM workaround bug that failed to rebuild local index partitions on split
+REM explicitly rebuild local index partitions after split table partition - if done in parallel PSFT_DDL_LOCK raises error during parallel index partition rebuild
 execute gfc_pspart.set_defaults(p_split_index_update => 'GLOBAL');
 
 execute gfc_pspart.display_defaults;
