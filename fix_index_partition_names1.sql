@@ -1,5 +1,5 @@
 REM fix_index_partition_names1.sql
-set lines 220 pages 99 trimspool on timi on serveroutput on
+set lines 220 pages 99 trimspool on timi on serveroutput on timi on
 column recname format a15
 column table_name format a18
 column indeX_name format a18
@@ -71,6 +71,7 @@ AND    tp.partition_position = ip.partition_position
 SELECT *
 FROM y
 WHERE  index_partition_name != expected_partition_name
+--AND    index_partition_name != table_partition_name
 --AND NOT index_partition_name LIKE table_partition_name
 ORDER BY table_name, index_partition_name desc
   ) LOOP
@@ -100,11 +101,12 @@ END;
 
 REM subpartitions
 
-DROP TABLE gfc_ind_subpartitions PURGE;
-CREATE TABLE gfc_ind_subpartitions AS
-select index_name, partition_position, partition_name, subpartition_position, subpartition_name from user_ind_subpartitions;
-create unique index gfc_ind_subpartitions on gfc_ind_subpartitions(index_name, partition_position, subpartition_position);
-
+--DROP TABLE gfc_ind_subpartitions PURGE;
+--CREATE TABLE gfc_ind_subpartitions AS
+--select index_name, partition_position, partition_name, subpartition_position, subpartition_name 
+--from user_ind_subpartitions;
+--create unique index gfc_ind_subpartitions 
+--on gfc_ind_subpartitions(index_name, partition_position, subpartition_position);
 
 DECLARE
   l_sql CLOB;
@@ -148,7 +150,7 @@ SELECT /*+LEADING(x tp)*/ x.*
 ,      x.recname||x.indexid||SUBSTR(tp.subpartition_name,2+LENGTH(x.recname)) expected_subpartition_name
 FROM   x
 ,      /*gfc_tab_subpartitions*/ tp
-,      gfc_ind_subpartitionS ip
+,      /*gfc_ind_subpartitionS*/ ip
 WHERE  tp.table_name = x.table_name
 AND    ip.index_name = x.index_name
 and    ip.partition_name = x.recname||x.indexid||SUBSTR(tp.partition_name,2+LENGTH(x.recname))
@@ -161,6 +163,7 @@ AND    tp.subpartition_position = ip.subpartition_position
 SELECT *
 FROM   y
 WHERE  index_subpartition_name != expected_subpartition_name
+--AND    index_subpartition_name != table_subpartition_name
 --AND NOT index_subpartition_name LIKE table_subpartition_name
 ORDER BY table_name, index_partition_name, index_subpartition_name desc
 --FETCH FIRST 1000 ROWS ONLY
@@ -192,6 +195,6 @@ END;
 BEGIN psft_ddl_lock.set_ddl_permitted(TRUE); END;
 /
 
-DROP TABLE gfc_ind_subpartitions PURGE;
+--DROP TABLE gfc_ind_subpartitions PURGE;
 
 spool off
