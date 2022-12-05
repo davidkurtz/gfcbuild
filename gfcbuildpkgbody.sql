@@ -2801,7 +2801,8 @@ BEGIN
         l_ind_def := l_ind_def||' UNIQUE';
       END IF;
       l_ind_def := l_ind_def||' INDEX '||LOWER(l_schema||l_ind_prefix||p_indexes.indexid||p_recname||p_indexes.name_suffix)||
-                   ' ON '||LOWER(l_schema||p_indexes.table_name);  --16.1.2022 correct table name for PeopleTools tables
+                   ' ON '||LOWER(l_schema||l_ind_prefix||'_'||p_recname); --reverted 6.11.2022
+--                 ' ON '||LOWER(l_schema||p_indexes.table_name);  --16.1.2022 correct table name for PeopleTools tables
       ins_line(l_type,l_ind_def);
       ind_cols(l_type,p_recname,p_indexes.indexid,l_desc_index);
       IF p_indexes.ind_part_type = 'L' THEN -- local partitioning
