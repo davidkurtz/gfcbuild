@@ -32,12 +32,13 @@ CREATE OR REPLACE PACKAGE &&ownerid..gfc_partdata AS
 -- 09.09.2012     DMK               1.01                          Create new script to create package PL/SQL procedure (gfc_partdata) 
 -- 06.11.2013                       1.02                          Add Temporary tables
 -- 05.02.2014     DMK               1.03                          PS_LEDGER index becomes global non-partitioned index
--- 14.07.2014     DMK               1.04                          FY 2012 is in a single partition
+-- 06.12.2022     DMK                                             Interval partition JRNL_LN, range partition PROJ_RESOURCE
 --------------------------------------------------------------------------------------
 --procedure to populate audit data
 --------------------------------------------------------------------------------------------------------------
-PROCEDURE partdata;        --head procedure that calls others
---PROCEDURE proj_partdata;     --GL meta data
+PROCEDURE partdata;          --head procedure that calls others
+--PROCEDURE gl_partdata;     --GL meta data
+--PROCEDURE proj_partdata;   --PROJ_RESOURCE meta data
 --PROCEDURE gtt_data;        --Global Temporary Tables
 --PROCEDURE index_comp;      --set index compression in PeopleTools tables   
 --PROCEDURE comp_attrib;     --procedure to apply compression attributes to existing tables
@@ -50,6 +51,17 @@ END gfc_partdata;
 --body of package that populates GFC metdata tables
 --------------------------------------------------------------------------------------------------------------
 CREATE OR REPLACE PACKAGE BODY gfc_partdata AS
+--------------------------------------------------------------------------------------------------------------
+--------------------------------------------------------------------------------------------------------------
+--Constants used in the meta data that may need to be changed over time as partitions are added/archived/purged
+--------------------------------------------------------------------------------------------------------------
+k_gl_first_year         CONSTANT INTEGER := 2012; --This is the first fiscal year 
+k_gl_first_monthly_year CONSTANT INTEGER := 2014; --This is the first fiscal year with monthly partitions
+k_gl_last_year          CONSTANT INTEGER := 2023; --This is the last fiscal year with monthly partitions
+--------------------------------------------------------------------------------------------------------------
+k_glb_first_year        CONSTANT INTEGER := 2018; --This is the first fiscal year 
+k_glb_last_year         CONSTANT INTEGER := 2023; --This is the last fiscal year with monthly partitions
+k_glb_first_month       CONSTANT INTEGER := 0;    --This is the first month in the first year
 --------------------------------------------------------------------------------------------------------------
 --------------------------------------------------------------------------------------------------------------
 --Other constants that should not be changed
@@ -184,6 +196,207 @@ msg(TO_CHAR(SQL%ROWCOUNT)||' rows inserted.');
   msg('GTT metadata load complete');
   dbms_application_info.set_module(module_name=>l_module, action_name=>l_action);
 END gtt_data;
+--------------------------------------------------------------------------------------------------------------
+--------------------------------------------------------------------------------------------------------------
+--------------------------------------------------------------------------------------------------------------
+--PROCEDURE TO POPULATE GL METADATA
+--------------------------------------------------------------------------------------------------------------
+PROCEDURE gl_partdata IS
+  k_action CONSTANT VARCHAR2(64) := 'GL_PARTDATA';
+  l_module v$session.module%TYPE;
+  l_action v$session.action%TYPE;
+  l_num_rows INTEGER; --variable to hold number of rows processed
+
+  l_compdate DATE := TRUNC(ADD_MONTHS(SYSDATE,-2),'MM'); 
+BEGIN
+  dbms_application_info.read_module(module_name=>l_module, action_name=>l_action);
+  dbms_application_info.set_module(module_name=>k_module, action_name=>k_action);
+
+  del_partdata('GL'); --delete part ID GL
+  del_partdata('GLB'); --delete part ID GL
+
+  msg('Populating list of GL Partitioned Tables');
+  INSERT INTO gfc_part_tables
+  (recname, part_id, part_type, part_column, subpart_type, subpart_column
+--, tab_tablespace, idx_tablespace, tab_storage, idx_storage
+  , method_opt
+  )
+  VALUES('LEDGER', 'GL', 'R', 'FISCAL_YEAR,ACCOUNTING_PERIOD', 'L', 'LEDGER' 
+--,'GLLARGE', 'PSINDEX', 'PCTUSED 90 PCTFREE **PCTFREE**', 'PCTFREE **PCTFREE**'
+  , 'FOR ALL COLUMNS SIZE AUTO FOR COLUMNS SIZE 254 LEDGER FISCAL_YEAR ACCOUNTING_PERIOD BOOK_CODE CURRENCY_CD BUSINESS_UNIT ACCOUNT PROJECT_ID'
+  );
+  msg(TO_CHAR(SQL%ROWCOUNT)||' rows inserted.');
+
+/*
+  msg('Populating list of GLB Partitioned Tables');
+  INSERT INTO gfc_part_tables
+  (recname, part_id, part_type, part_column, subpart_type, subpart_column
+--, tab_tablespace, idx_tablespace, tab_storage, idx_storage
+  , method_opt
+  )
+  VALUES('LEDGER_BUDG', 'GLB', 'R', 'FISCAL_YEAR,ACCOUNTING_PERIOD', 'L', 'LEDGER' 
+--,'GLLARGE', 'PSINDEX', 'PCTUSED 90 PCTFREE **PCTFREE**', 'PCTFREE **PCTFREE**'
+  , 'FOR ALL COLUMNS SIZE AUTO FOR COLUMNS SIZE 254 LEDGER FISCAL_YEAR ACCOUNTING_PERIOD BOOK_CODE CURRENCY_CD BUSINESS_UNIT ACCOUNT PROJECT_ID'
+  );
+  msg(TO_CHAR(SQL%ROWCOUNT)||' rows inserted.');
+*/
+
+--------------------------------------------------------------------------------------------------------------
+--describe indexes that are not to be locally partitioned
+--------------------------------------------------------------------------------------------------------------
+  msg('Insert metadata for global non-partitioned index on partitioned GL and GLB tables.');
+  INSERT INTO gfc_part_indexes
+  (recname, indexid, part_id, part_type, part_column, subpart_type, subpart_column, hash_partitions)
+  SELECT   t.recname
+  ,        i.indexid
+  ,        t.part_id
+  ,        'N' part_type
+  ,        t.part_column
+  ,        'N' subpart_type
+  ,        '' subpart_column
+  ,        t.hash_partitions
+  FROM     gfc_part_tables t
+  ,        psindexdefn i
+  WHERE    t.recname = i.recname
+  AND      t.subpart_type IN('L','R')
+  AND      t.part_id IN('GL'/*,'GLB'*/)
+  AND NOT EXISTS(
+        SELECT 'x'
+        FROM pskeydefn k, psrecfielddb f
+        WHERE f.recname = i.recname
+        AND   k.recname = f.recname_parent
+        AND   k.indexid = i.indexid
+        AND   k.fieldname = 'FISCAL_YEAR'
+        AND   k.keyposn <= 3 --partitioning key in first three columns of index
+        );
+  msg(TO_CHAR(SQL%ROWCOUNT)||' rows inserted.');
+
+
+--------------------------------------------------------------------------------------------------------------
+-- Partition Ranges
+--------------------------------------------------------------------------------------------------------------
+  msg('Populating GL Range Partitions');
+  INSERT INTO gfc_part_ranges (part_id, part_no, part_name, part_value, tab_storage, idx_storage)
+  SELECT 	'GL' part_id
+  , 		k_gl_first_year+rownum-1 part_no
+  , 		LTRIM(TO_CHAR(k_gl_first_year+rownum-1)) part_name
+  , 		LTRIM(TO_CHAR(k_gl_first_year+rownum))||',0'part_value
+  , 		'PCTFREE 0 COMPRESS' tab_storage
+  , 		'PCTFREE 0' idx_storage
+  FROM 	dual
+  WHERE    k_gl_first_year<k_gl_first_monthly_year
+  CONNECT BY level <= k_gl_first_monthly_year-k_gl_first_year
+  UNION ALL
+  SELECT 
+	'GL' part_id
+  ,     y.y+p.part_no/100 part_no
+  , 	LTRIM(TO_CHAR(y.y,'0000'))||'_'||p.part_name part_name
+  ,	LTRIM(TO_CHAR(y.y+p.y))||','||p.part_value part_value
+  ,	CASE WHEN TO_CHAR(y.y+p.y+p.part_value/100,'0000.00') < TO_NUMBER(TO_CHAR(l_compdate,'YYYY'))+TO_NUMBER(TO_CHAR(l_compdate,'MM'))/100
+	     THEN 'PCTFREE 0 COMPRESS'
+        END 
+  ,	CASE WHEN TO_CHAR(y.y+p.y+p.part_value/100,'0000.00') < TO_NUMBER(TO_CHAR(l_compdate,'YYYY'))+TO_NUMBER(TO_CHAR(l_compdate,'MM'))/100
+	     THEN 'PCTFREE 0'
+        END 
+  FROM	(
+	SELECT  k_gl_first_monthly_year+rownum-1 y --monthly partitioned data starts in 2012
+	FROM	dual
+	CONNECT BY level <= k_gl_last_year-k_gl_first_monthly_year+1 --years of monthly partitioned data
+	) y
+  ,	(
+	SELECT	rownum part_no
+        ,       rownum+1 part_value --partition less than value
+        , 	LTRIM(TO_CHAR(rownum,'00')) part_name --name of range partition
+        ,       0 y --add to year
+	FROM	dual
+	CONNECT BY level <= 12 --12 monthly periods
+	UNION ALL
+	SELECT 	0, 1, 'BF', 0
+	FROM	dual
+	UNION ALL
+	SELECT 	99, 0 --carry forward less than 
+	, 	'CF'
+	, 	1 --carry forward into next year
+	FROM	dual
+	) p;
+  msg(TO_CHAR(SQL%ROWCOUNT)||' rows inserted.');
+
+--------------------------------------------------------------------------------------------------------------
+/*
+  msg('Populating GL Budget Range Partitions');
+  INSERT INTO gfc_part_ranges (part_id, part_no, part_name, part_value, tab_storage, idx_storage)
+  SELECT 
+	'GLB' part_id
+  ,     y.y+p.part_no/100 part_no
+  , 	LTRIM(TO_CHAR(y.y,'0000'))||'_'||p.part_name part_name
+  ,	LTRIM(TO_CHAR(y.y+p.y))||','||p.part_value part_value
+  ,	CASE WHEN TO_CHAR(y.y,'0000') < TO_NUMBER(TO_CHAR(sysdate,'YYYY'))
+	     THEN 'PCTFREE 0 COMPRESS'
+        END 
+  ,	CASE WHEN TO_CHAR(y.y,'0000') < TO_NUMBER(TO_CHAR(sysdate,'YYYY'))
+	     THEN 'PCTFREE 0'
+        END 
+  FROM	(
+	SELECT  k_glb_first_year+rownum-1 y --monthly partitioned data starts in 2012
+	FROM	dual
+	CONNECT BY level <= k_glb_last_year-k_glb_first_year+1 --2 years of monthly partitioned data
+	) y
+  ,	(
+	SELECT	rownum part_no
+        ,       MOD(rownum+1,13) part_value --partition less than value
+        , 	LTRIM(TO_CHAR(rownum,'00')) part_name --name of range partition
+        ,       FLOOR(rownum/12) y --add to year
+	FROM	dual
+	CONNECT BY level <= 12 --12 monthly periods
+	) p
+  WHERE p.part_no>=k_glb_first_month OR y.y>k_glb_first_year;
+  msg(TO_CHAR(SQL%ROWCOUNT)||' rows inserted.');
+*/
+-----------------------------------------------------------------------------------------------------------
+--list sub-partitions
+-----------------------------------------------------------------------------------------------------------
+  msg('Populating GL List Partitions');
+  l_num_rows := 0;
+  INSERT INTO gfc_part_lists (part_id, part_no, part_name, list_value) VALUES('GL',1,'ACTUALS','''ACTUALS''');
+  l_num_rows := l_num_rows +SQL%ROWCOUNT;
+  INSERT INTO gfc_part_lists (part_id, part_no, part_name, list_value) VALUES('GL',2,'BUDGETS','''BUDGETS''');
+  l_num_rows := l_num_rows +SQL%ROWCOUNT;
+--INSERT INTO gfc_part_lists (part_id, part_no, part_name, list_value) VALUES('GL',3,'ADJUSTS' ,'''ADJUST1'',''ADJUST5'',''ADJUST8'',''ADJUST9''');
+--l_num_rows := l_num_rows +SQL%ROWCOUNT;
+  INSERT INTO gfc_part_lists (part_id, part_no, part_name, list_value) VALUES('GL',9,'Z_OTHERS','DEFAULT');
+  l_num_rows := l_num_rows +SQL%ROWCOUNT;
+/*
+  INSERT INTO gfc_part_lists (part_id, part_no, part_name, list_value) VALUES('GLB',1,'BUDGETS2','''BUDGETS2''');
+  l_num_rows := l_num_rows +SQL%ROWCOUNT;
+--INSERT INTO gfc_part_lists (part_id, part_no, part_name, list_value) VALUES('GLB',2,'BDTRAN_EU','''BDTRAN_EU''');
+--l_num_rows := l_num_rows +SQL%ROWCOUNT;
+--INSERT INTO gfc_part_lists (part_id, part_no, part_name, list_value) VALUES('GLB',3,'BDTRAN_US','''BDTRAN_US''');
+--l_num_rows := l_num_rows +SQL%ROWCOUNT;
+  INSERT INTO gfc_part_lists (part_id, part_no, part_name, list_value) VALUES('GLB',9,'Z_OTHERS','DEFAULT');
+  l_num_rows := l_num_rows +SQL%ROWCOUNT;
+*/
+  msg(TO_CHAR(l_num_rows)||' rows inserted.');
+
+-----------------------------------------------------------------------------------------------------------
+--mapping between ranges and lists
+-----------------------------------------------------------------------------------------------------------
+  msg('Insert GL range-v-list partition mapping metadata');
+  INSERT INTO gfc_part_subparts
+  (part_id, part_name, subpart_name)
+  SELECT r.part_id, r.part_name, l.part_name
+  FROM   gfc_part_ranges r
+  ,      gfc_part_lists l
+  WHERE  l.part_id = r.part_id
+  AND    l.part_id IN('GL'/*,'GLB'*/);
+
+  msg(TO_CHAR(SQL%ROWCOUNT)||' rows inserted.');
+-----------------------------------------------------------------------------------------------------------
+--End GL Metadata
+-----------------------------------------------------------------------------------------------------------
+  commit;
+  msg('GL metadata load complete');
+  dbms_application_info.set_module(module_name=>l_module, action_name=>l_action);
+END gl_partdata;
 --------------------------------------------------------------------------------------------------------------
 --------------------------------------------------------------------------------------------------------------
 --PROCEDURE TO POPULATE WL METADATA
@@ -516,18 +729,18 @@ BEGIN
 --------------------------------------------------------------------------------------------------------------
   msg('Populating JRNLLN Range Partitions');
 
-  l_begindate := TO_DATE('20140101',k_date_format); --first full size annual partition - prior years all in first partition
-  l_enddate   := TRUNC(ADD_MONTHS(SYSDATE,15),'YYYY'); --create next year if within 3 months of end of year
+  l_begindate := ADD_MONTHS(TRUNC(TO_DATE('20140701',k_date_format),'YYYY'),6); --first full size annual partition - prior years all in first partition
+  l_enddate   := ADD_MONTHS(TRUNC(ADD_MONTHS(SYSDATE,15),'YYYY'),6); --create next year if within 3 months of end of year
 
   INSERT INTO gfc_part_ranges (part_id, part_no, part_name, part_value)
   VALUES 
-  ('JRNLLN', 1, 'PRE2014', 'TO_DATE(''20140101'','''||k_date_format||''')');
+  ('JRNLLN', 1, 'PRE2014', 'TO_DATE(''20130701'','''||k_date_format||''')');
 
   INSERT INTO gfc_part_ranges (part_id, part_no, part_name, part_value)
   WITH n AS (
     SELECT level+1 part_no
-    ,      TO_CHAR(ADD_MONTHS(l_begindate,level*12)-1,k_year_format) offset_year_str
-    ,      TO_CHAR(ADD_MONTHS(l_begindate,level*12),k_date_format) offset_date_str
+    ,      TO_CHAR(ADD_MONTHS(l_begindate,(level-1)*12),k_year_format) offset_year_str
+    ,      TO_CHAR(ADD_MONTHS(l_begindate,(level-1)*12),k_date_format) offset_date_str
     FROM DUAL
     CONNECT BY LEVEL <= CEIL(MONTHS_BETWEEN(l_enddate, l_begindate)/12)
   )
@@ -660,6 +873,7 @@ BEGIN
 
   truncmeta;
 
+  gl_partdata;
   proj_partdata;
   jrnlln_partdata;
 --wl_partdata;
