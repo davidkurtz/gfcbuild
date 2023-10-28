@@ -173,7 +173,7 @@ END del_partdata;
 --PROCEDURE TO POPULATE GP METADATA
 --------------------------------------------------------------------------------------------------------------
 PROCEDURE gp_partdata IS
-  k_action CONSTANT VARCHAR2(64) := 'GL_PARTDATA';
+  k_action CONSTANT VARCHAR2(64) := 'GP_PARTDATA';
   l_module v$session.module%TYPE;
   l_action v$session.action%TYPE;
 BEGIN
@@ -195,7 +195,7 @@ BEGIN
 --country specific tables for installed country extentions only will be added
 --------------------------------------------------------------------------------------------------------------
 msg('Insert list of GP temporary tables');
-INSERT INTO gfc_temp_tables                 
+INSERT INTO gfc_temp_tables (recname)                
 SELECT  r.recname
 FROM    gfc_installed_gp r
 WHERE   r.installed_gp != 'N'
@@ -301,6 +301,14 @@ FROM gfc_temp_tables
 ;
 msg(TO_CHAR(SQL%ROWCOUNT)||' rows inserted.');
 
+--------------------------------------------------------------------------------------------------------------
+--set tablespace options on global temporary objects
+--------------------------------------------------------------------------------------------------------------
+msg('Specify tablespaces for global temporary tables');
+UPDATE gfc_temp_tables
+SET    tab_tablespace = 'PSGTT01'   /*default PSFT tablespace*/
+;
+msg(TO_CHAR(SQL%ROWCOUNT)||' rows updated.');
 --------------------------------------------------------------------------------------------------------------
 --insert data to specify the tables to be partitioned
 --country specific tables for installed country extentions only will be added
@@ -982,7 +990,7 @@ BEGIN
   dbms_application_info.set_module(module_name=>k_module, action_name=>k_action);
 
   truncmeta;
-  gl_partdata;
+  gp_partdata;
 
   msg('Checking Compression Attributes -v- Metadta');
   FOR i IN ( --table level compression where all the partitions are the same

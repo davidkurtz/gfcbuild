@@ -273,6 +273,7 @@ CREATE
 --GLOBAL TEMPORARY
 TABLE &&ownerid..gfc_temp_tables
 (recname         VARCHAR2(30) 	NOT NULL --peoplesoft record name
+,tab_tablespace  VARCHAR2(30)
 ,CONSTRAINT gfc_temp_tables PRIMARY KEY(recname)
 );
 

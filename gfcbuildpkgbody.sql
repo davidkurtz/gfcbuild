@@ -224,6 +224,7 @@ BEGIN
   sys.dbms_output.put_line('16.01.2022 - Correct table name in index commands to use custom table names');
   sys.dbms_output.put_line('10.03.2022 - remove physical attribute from index subpartition');
   sys.dbms_output.put_line('14.03.2022 - control index rebuild on split partition');
+  sys.dbms_output.put_line('26.10.2023 - specifiy tablespace for Global Temporary tables');
   dbms_application_info.set_module(module_name=>l_module, action_name=>l_action);
 END history;
 
@@ -3117,13 +3118,6 @@ BEGIN
 -- generate all GLOBAL TEMPORARY indexes defined on record
 -------------------------------------------------------------------------------------------------------
 PROCEDURE mk_gt_indexes (p_recname VARCHAR2, p_table_name VARCHAR2, p_suffix VARCHAR2) IS
-                CURSOR c_indexes (p_recname VARCHAR2) IS
-                SELECT  g.indexid, g.uniqueflag, g.name_suffix
-                FROM    gfc_ps_indexdefn g -- 6.9.2007 removed psindexdefn
-                WHERE   g.recname = p_recname
-		AND     g.platform_ora = 1 -- 20.2.2008 added
-                ;
-                p_indexes c_indexes%ROWTYPE;
                 l_ind_def VARCHAR2(100 CHAR);
 		l_module v$session.module%type;
 		l_action v$session.action%type;
@@ -3132,33 +3126,33 @@ PROCEDURE mk_gt_indexes (p_recname VARCHAR2, p_table_name VARCHAR2, p_suffix VAR
 		set_action(p_action_name=>'MK_GT_INDEXES');
 		debug_msg('(recname='||p_recname||', table_name='||p_table_name||', suffix='||p_suffix||')');
 
-                OPEN c_indexes(p_recname);
-                LOOP
-                        FETCH c_indexes INTO p_indexes;
-                        EXIT WHEN c_indexes%NOTFOUND;
-
+  FOR c_indexes IN( --26.10.2023 - switch to implicit cursor
+    SELECT g.indexid, g.uniqueflag, g.name_suffix
+    FROM   gfc_ps_indexdefn g -- 6.9.2007 removed psindexdefn
+    WHERE  g.recname = p_recname
+	AND    g.platform_ora = 1 -- 20.2.2008 added
+  ) LOOP
 ------------------------ index build for standard build script
-			IF l_drop_index = 'Y' THEN
-	                        ins_line(k_index,'DROP INDEX '||LOWER(l_schema2||'ps'||p_indexes.indexid||p_recname||p_suffix||p_indexes.name_suffix));
+	IF l_drop_index = 'Y' THEN
+	  ins_line(k_index,'DROP INDEX '||LOWER(l_schema2||'ps'||c_indexes.indexid||p_recname||p_suffix||c_indexes.name_suffix));
 	                        ins_line(k_index,'/');
 	                        ins_line(k_index,'');
 			END IF;
                         l_ind_def := 'CREATE';
-                        IF p_indexes.uniqueflag = 1 THEN
-                                l_ind_def := l_ind_def||' UNIQUE';
-                        END IF;
-                        l_ind_def := l_ind_def||' INDEX ps'||LOWER(p_indexes.indexid||p_recname||p_suffix||p_indexes.name_suffix)
+    IF c_indexes.uniqueflag = 1 THEN
+      l_ind_def := l_ind_def||' UNIQUE';
+    END IF;
+    l_ind_def := l_ind_def||' INDEX ps'||LOWER(c_indexes.indexid||p_recname||p_suffix||c_indexes.name_suffix)
                                                    ||' ON '||LOWER(p_table_name||p_suffix);
                         ins_line(k_build,l_ind_def);
                         ins_line(k_index,l_ind_def);
-                        ind_cols(k_build,p_recname,p_indexes.indexid,l_desc_index);
-                        ind_cols(k_index,p_recname,p_indexes.indexid,l_desc_index);
+    ind_cols(k_build,p_recname,c_indexes.indexid,l_desc_index);
+    ind_cols(k_index,p_recname,c_indexes.indexid,l_desc_index);
                         ins_line(k_build,'/');
                         ins_line(k_index,'/');
                         ins_line(k_build,'');
                         ins_line(k_index,'');
                 END LOOP;
-                CLOSE c_indexes;
 
 		unset_action(p_action_name=>l_action);
         END mk_gt_indexes;
@@ -5320,11 +5314,14 @@ BEGIN
   END IF;
 
   FOR p_tables IN(
-    SELECT   *
-    FROM     gfc_ps_tables
-    WHERE    table_type = 'T'
-    AND	(recname LIKE p_recname OR p_recname IS NULL)
-    ORDER BY recname)
+    SELECT   p.*
+    ,        t.tab_tablespace
+    FROM     gfc_ps_tables p
+      LEFT OUTER JOIN gfc_temp_tables t
+      ON p.recname = t.recname
+    WHERE    p.table_type = 'T'
+    AND	(p.recname LIKE p_recname OR p_recname IS NULL)
+    ORDER BY p.recname)
   LOOP
 --  ins_line(k_build,'set echo on pause off verify on feedback on timi on autotrace off pause off lines 100');
 --  ins_line(k_build,LOWER('spool '||LOWER(l_scriptid)||'_'||l_dbname||'_'||p_tables.recname||'.lst'));
@@ -5345,28 +5342,29 @@ BEGIN
                                         l_suffix := '';
                                 END IF;
 
-                                ins_line(k_build,'DROP TABLE '||LOWER(l_schema2||p_tables.table_name||l_suffix)
-				                        ||l_drop_purge_suffix);
+      ins_line(k_build,'DROP TABLE '||LOWER(l_schema2||p_tables.table_name||l_suffix)||l_drop_purge_suffix);
 				ins_line(k_build,'/');
                               	ins_line(k_build,'');
                                	whenever_sqlerror(k_build,TRUE);
-                               	ins_line(k_build,'CREATE GLOBAL TEMPORARY TABLE '
-				         ||LOWER(l_schema2||p_tables.table_name||l_suffix));
-                                tab_cols(k_build,p_tables.recname, 'N');
-                                ins_line(k_build,'ON COMMIT PRESERVE ROWS');
-				ins_line(k_build,'/');
-                                ins_line(k_build,'');
+      ins_line(k_build,'CREATE GLOBAL TEMPORARY TABLE '||LOWER(l_schema2||p_tables.table_name||l_suffix));
+      tab_cols(k_build,p_tables.recname, 'N');
+      ins_line(k_build,'ON COMMIT PRESERVE ROWS');
+      IF p_tables.tab_tablespace IS NOT NULL THEN
+        ins_line(k_build,'TABLESPACE '||p_tables.tab_tablespace);
+      END IF;
+	  ins_line(k_build,'/');
+      ins_line(k_build,'');
 
-                              	mk_gt_indexes(p_tables.recname,p_tables.table_name,l_suffix);
-                                ins_line(k_build,'');
+      mk_gt_indexes(p_tables.recname, p_tables.table_name, l_suffix);
+      ins_line(k_build,'');
 
-                	        IF l_deletetempstats = 'Y' THEN
+      IF l_deletetempstats = 'Y' THEN
 					l_counter := l_counter_start;
 
 		                        WHILE l_counter <= 2 LOOP
 						IF l_counter = 2 AND l_tempinstance = 0 THEN
---				                        ins_line(k_stats,'set echo on pause off verify on feedback on timi on autotrace off pause off lines '||k_max_line_length);
---				      	                ins_line(k_stats,LOWER('spool gfcstats_'||l_dbname||'_'||p_tables.recname||'.lst'));
+--		    ins_line(k_stats,'set echo on pause off verify on feedback on timi on autotrace off pause off lines '||k_max_line_length);
+--			ins_line(k_stats,LOWER('spool gfcstats_'||l_dbname||'_'||p_tables.recname||'.lst'));
 				               	        signature(k_stats,FALSE,'gfcstats',p_tables.recname);
 						END IF;
 	        	                        ins_line(l_counter,'');
@@ -5378,8 +5376,7 @@ BEGIN
 		                                        ins_line(l_counter,',force=>TRUE);');
                  		                        ins_line(l_counter,'sys.dbms_stats.lock_table_stats');
                         		                ins_line(l_counter,'(ownname=>'''||UPPER(l_schema1)||'''');
-                                                        ins_line(l_counter,',tabname=>'''||
-							                     UPPER(p_tables.table_name||l_suffix)||''');');
+            ins_line(l_counter,',tabname=>'''||UPPER(p_tables.table_name||l_suffix)||''');');
 						END IF;
        	                        	        ins_line(l_counter,'END;');
                	                        	ins_line(l_counter,'/');
@@ -5434,8 +5431,9 @@ END exec_sql;
 		WHEN table_does_not_exist THEN unset_action(p_action_name=>l_action);
 	END drop_table;
 
----------------------------------------------------------------
+/*---------------------------------------------------------------
 -- gfc_ps_tab_columns holds a list of columns for tables to be recreated.   Any sub-records will be expanded recursively
+-- never used - removed 26.10.2023
 -------------------------------------------------------------------------------------------------------
 	PROCEDURE ddl_gfc_ps_tab_columns
 	(p_gtt BOOLEAN DEFAULT FALSE) 
@@ -5466,6 +5464,7 @@ END exec_sql;
 
 ---------------------------------------------------------------
 -- gfc_ora_tab_columns
+-- never used - removed 26.10.2023
 -------------------------------------------------------------------------------------------------------
 	PROCEDURE ddl_gfc_ora_tab_columns
 	(p_gtt BOOLEAN DEFAULT FALSE) 
@@ -5495,6 +5494,7 @@ END exec_sql;
 
 ---------------------------------------------------------------
 -- to hold override parameters for function based indexes specified in partdata - 19.10.2007
+-- never used - removed 26.10.2023
 -------------------------------------------------------------------------------------------------------
 	PROCEDURE ddl_gfc_ps_idxddlparm
 	(p_gtt BOOLEAN DEFAULT FALSE) 
@@ -5522,6 +5522,8 @@ END exec_sql;
 		unset_action(p_action_name=>l_action);
 	END;
 
+---------------------------------------------------------------
+-- never used - removed 26.10.2023
 ---------------------------------------------------------------
 	PROCEDURE ddl_gfc_part_ranges
 	(p_gtt BOOLEAN DEFAULT FALSE) 
@@ -5556,6 +5558,7 @@ END exec_sql;
 
 ---------------------------------------------------------------
 -- gfc_ps_tables holds the records for which DDL scripts are to be regeneated by this script
+-- never used - removed 26.10.2023
 -------------------------------------------------------------------------------------------------------
 	PROCEDURE ddl_gfc_ps_tables
 	(p_gtt BOOLEAN DEFAULT FALSE) 
@@ -5589,6 +5592,7 @@ END exec_sql;
 
 ---------------------------------------------------------------
 -- gfc_ps_indexdefn - expanded version of psindexdefn
+-- never used - removed 26.10.2023
 -------------------------------------------------------------------------------------------------------
 	PROCEDURE ddl_gfc_ps_indexdefn
 	(p_gtt BOOLEAN DEFAULT FALSE) 
@@ -5622,6 +5626,7 @@ END exec_sql;
 
 ---------------------------------------------------------------
 -- gfc_ps_keydefn - expanded version of pskeydefn
+-- never used - removed 26.10.2023
 -------------------------------------------------------------------------------------------------------
 	PROCEDURE ddl_gfc_ps_keydefn
 	(p_gtt BOOLEAN DEFAULT FALSE) 
@@ -5651,6 +5656,8 @@ END exec_sql;
 		unset_action(p_action_name=>l_action);
 	END;
 
+---------------------------------------------------------------
+-- never used - removed 26.10.2023
 ---------------------------------------------------------------
 	PROCEDURE ddl_gfc_part_tables
 	(p_gtt BOOLEAN DEFAULT FALSE) 
@@ -5698,6 +5705,8 @@ END exec_sql;
 	END;
 
 ---------------------------------------------------------------
+-- never used - removed 26.10.2023
+---------------------------------------------------------------
 	PROCEDURE ddl_gfc_part_indexes
 	(p_gtt BOOLEAN DEFAULT FALSE) 
 	IS
@@ -5735,6 +5744,8 @@ END exec_sql;
 	END;
 
 ---------------------------------------------------------------
+-- never used - removed 26.10.2023
+---------------------------------------------------------------
 	PROCEDURE ddl_gfc_part_lists 
 	(p_gtt BOOLEAN DEFAULT FALSE) 
 	IS
@@ -5767,6 +5778,8 @@ END exec_sql;
 	END;
 
 ---------------------------------------------------------------
+-- never used - removed 26.10.2023
+---------------------------------------------------------------
 	PROCEDURE ddl_gfc_part_subparts
 	(p_gtt BOOLEAN DEFAULT FALSE) 
 	IS
@@ -5795,6 +5808,8 @@ END exec_sql;
 	END;
 
 ---------------------------------------------------------------
+-- never used - removed 26.10.2023
+---------------------------------------------------------------
 	PROCEDURE ddl_gfc_temp_tables
 	(p_gtt BOOLEAN DEFAULT FALSE) 
 	IS
@@ -5818,6 +5833,8 @@ END exec_sql;
 		unset_action(p_action_name=>l_action);
 	END;
 
+---------------------------------------------------------------
+-- never used - removed 26.10.2023
 ---------------------------------------------------------------
 	PROCEDURE ddl_gfc_ddl_script
 	(p_gtt BOOLEAN DEFAULT FALSE) 
@@ -5843,6 +5860,8 @@ END exec_sql;
 		unset_action(p_action_name=>l_action);
 	END;
 
+---------------------------------------------------------------
+-- never used - removed 26.10.2023
 ---------------------------------------------------------------
 	PROCEDURE ddl_gfc_ps_alt_ind_cols
 	IS
@@ -5872,6 +5891,7 @@ END exec_sql;
 
 ---------------------------------------------------------------
 -- rem 11.2.2003 - view corrected to handled user indexes
+-- never used - removed 26.10.2023
 -------------------------------------------------------------------------------------------------------
 	PROCEDURE ddl_gfc_ps_keydefn_vw
 	IS
@@ -5923,7 +5943,7 @@ END exec_sql;
 		unset_action(p_action_name=>l_action);
 	END;
 
-------------------------------------------------------------------------------------------------------
+------------------------------------------------------------------------------------------------------*/
 -- will make these public if I can disable syntax checking
 ------------------------------------------------------------------------------------------------------
 
@@ -5952,7 +5972,8 @@ BEGIN
 END spooler;
 ---------------------------------------------------------------
 -- create all working storage tables
--------------------------------------------------------------------------------------------------------
+-- never used removed 26.10.2023
+/*-------------------------------------------------------------------------------------------------------
 PROCEDURE create_tables
 (p_gtt BOOLEAN DEFAULT FALSE) 
 IS
@@ -5975,9 +5996,9 @@ BEGIN
   ddl_gfc_ps_keydefn_vw;
 
 END create_tables;
-
 ---------------------------------------------------------------
 -- drop named table
+-- never used removed 26.10.2023
 -------------------------------------------------------------------------------------------------------
 PROCEDURE drop_tables IS
 BEGIN
@@ -5998,6 +6019,7 @@ BEGIN
   drop_table('gfc_part_lists');
   drop_table('gfc_part_subparts');
 END drop_tables;
+*/
 
 ------------------------------------------------------------------------------------------------------
 -- public procedures and functions
