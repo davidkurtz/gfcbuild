@@ -5354,6 +5354,9 @@ BEGIN
       END IF;
 	  ins_line(k_build,'/');
       ins_line(k_build,'');
+      ins_line(k_build,'ALTER TABLE '||LOWER(l_schema2||p_tables.table_name||l_suffix)||' NOPARALLEL');
+	  ins_line(k_build,'/');
+      ins_line(k_build,'');
 
       mk_gt_indexes(p_tables.recname, p_tables.table_name, l_suffix);
       ins_line(k_build,'');
