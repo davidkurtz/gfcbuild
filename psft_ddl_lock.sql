@@ -33,6 +33,7 @@ rem 20016-DDL on Table that is a Materialised View
 rem 20017-DDL on Table with shadow Global Temporary Table
 rem 20018-DDL on Index of Table with shadow Global Temporary Table
 -----------------------------------------------------------------------------------------------------------*/
+clear screen
 set echo on feedback on verify on lines 100 timi on 
 spool psft_ddl_lock
 ---------------------------------------------------------------------------------------
@@ -173,6 +174,8 @@ BEGIN
     l_recname := '';
     l_testme := FALSE;
   END;
+  --dbms_output.put_line('l_recname:='||l_recname);
+  --dbms_output.put_line('object:'||ora_dict_obj_owner||'.'||ora_dict_obj_name);
 
   IF NOT l_testme THEN
    BEGIN 
@@ -327,10 +330,10 @@ BEGIN
     END;
     -------------------------------------------------------------------------------------------------------
     --debug code for temp table testing
-    --  dbms_output.put_line('rectype:'||l_rectype);
-    --  dbms_output.put_line('SQL    :'||l_sql_stmt||':');
-    --  dbms_output.put_line('Testfor:'||UPPER('ALTER%TABLE%PS_'||l_recname||l_suffix
-    --                                     ||'%RENAME%TO%GT_'||l_recname||l_suffix));
+    --dbms_output.put_line('rectype:'||l_rectype);
+    --dbms_output.put_line('SQL    :'||l_sql_stmt||':');
+    --dbms_output.put_line('Testfor:'||UPPER('ALTER%TABLE%PS_'||l_recname||l_suffix
+    --                               ||'%RENAME%TO%GT_'||l_recname||l_suffix));
     -------------------------------------------------------------------------------------------------------
     IF  l_testme /*explcitly omit renames swap with shadow GT table*/
     AND l_rectype = 7
@@ -394,7 +397,7 @@ BEGIN
      AND    i.table_name = ora_dict_obj_name
      AND    i.table_owner = ora_dict_obj_owner
      AND    NOT (SUBSTR(i.index_name,3,1) IN('_','0','1','2','3','4','5','6','7','8','9')
-                 AND   ora_dict_obj_name LIKE 'PS_'||l_recname)
+                 AND   i.index_name LIKE 'PS_'||l_recname) /*dmk 19.3.2024*/
      AND    NOT EXISTS(
       SELECT 'x' /*check for indexes on record*/
       FROM   psindexdefn j
@@ -541,10 +544,10 @@ EXCEPTION
   RAISE_APPLICATION_ERROR(l_errno,'PSFT_DDL_LOCK: '||l_msg||CHR(10)||l_msg2||CHR(10)||'SQL:'||l_sql_stmt);
 END psft_ddl_lock;
 /
+show errors
 DROP TRIGGER t_lock --remove old version of trigger
 /
 
-show errors
 pause
 
 
