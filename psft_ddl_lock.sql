@@ -11,6 +11,7 @@ rem 10.01.2008 remove any checks on explicit DDL on triggers
 rem 06.07.2009 enhancements to support PS temp record and global temp table shadow table trigger - www.go-faster.co.uk/scripts.htm#gfc_temp_table_type.sql
 rem 02.06.2011 introduce package function to disable trigger just for current session
 rem 02.07.2021 removed additional paramters from dbms_stats.gather_table_stats
+rem 19.03.2024 correct index name match criteria
 /*-----------------------------------------------------------------------------------------------------------
 rem Summary of Error Codes
 rem 20000-Generate No Data Found Error.  Should be impossible.
@@ -397,7 +398,7 @@ BEGIN
      AND    i.table_name = ora_dict_obj_name
      AND    i.table_owner = ora_dict_obj_owner
      AND    NOT (SUBSTR(i.index_name,3,1) IN('_','0','1','2','3','4','5','6','7','8','9')
-                 AND   i.index_name LIKE 'PS_'||l_recname) /*dmk 19.3.2024*/
+                 AND   i.index_name LIKE 'PS_'||l_recname||l_suffix /*19.03.2024 correct index name match*/)
      AND    NOT EXISTS(
       SELECT 'x' /*check for indexes on record*/
       FROM   psindexdefn j
@@ -420,7 +421,7 @@ BEGIN
      AND    i.owner = ora_dict_obj_owner
      AND    i.table_name = ora_dict_obj_name
      AND    NOT (SUBSTR(i.index_name,3,1) IN('_','0','1','2','3','4','5','6','7','8','9')
-                 AND   ora_dict_obj_name LIKE 'PS_'||l_recname||l_suffix)
+                 AND   i.index_name LIKE 'PS_'||l_recname||l_suffix /*19.03.2024 correct index name match*/)
      AND NOT EXISTS( /*not defined in PeopleSoft*/
       SELECT 'x'
       FROM   psindexdefn x
@@ -517,21 +518,22 @@ BEGIN
       l_msg := l_msg0;
     END;
     -------------------------------------------------------------------------------------------------------
-    BEGIN --if a shadow GTT exists - www.go-faster.co.uk/scripts.htm#gfc_temp_table_type.sql
-     SELECT -20017, 'Table '||ora_dict_obj_name||' has a shadow Global Temporary Table '||t.table_name||'.'
-     INTO   l_errno, l_msg
-     FROM   all_tables t
-     WHERE  ROWNUM = 1
-     AND    t.owner = ora_dict_obj_owner
-     AND    t.table_name = 'GT'||SUBSTR(ora_dict_obj_name,3)
-     AND    t.temporary = 'Y'
-     ;
-     RAISE e_generate_message;
-    EXCEPTION
-     WHEN NO_DATA_FOUND THEN 
-      l_errno := -20000;
-      l_msg := l_msg0;
-    END;
+    --BEGIN --if a shadow GTT exists - www.go-faster.co.uk/scripts.htm#gfc_temp_table_type.sql
+    -- SELECT -20017, 'Table '||ora_dict_obj_name||' has a shadow Global Temporary Table '||t.table_name||'.'
+    -- INTO   l_errno, l_msg
+    -- FROM   all_tables t
+    -- WHERE  ROWNUM = 1
+    -- AND    t.owner = ora_dict_obj_owner
+    -- AND    t.table_name = 'GT'||SUBSTR(ora_dict_obj_name,3)
+    -- AND    t.temporary = 'Y'
+    -- ;
+    -- RAISE e_generate_message;
+    --EXCEPTION
+    -- WHEN NO_DATA_FOUND THEN 
+    --  l_errno := -20000;
+    --  l_msg := l_msg0;
+    --END;
+    -------------------------------------------------------------------------------------------------------
    END IF;
   END IF;
  END IF;
